@@ -1,6 +1,9 @@
 # Build artifacts (built locally via build.ps1)
 bin/
 
+# Packaged distributables (built locally via package.ps1)
+dist/
+
 # Editor / OS junk
 .vs/
 *.user

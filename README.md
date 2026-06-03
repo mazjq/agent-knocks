@@ -28,13 +28,37 @@
 
 ## 安装
 
+> 仅 Windows。**无需安装任何 SDK/运行时**——用系统自带的 .NET 编译器构建，单 EXE 常驻约 23MB。
+
+### 方式一：双击安装（最简单）
+
+1. 下载本仓库（绿色 **Code → Download ZIP**，或 `git clone`），解压
+2. **双击 `install.cmd`**
+
+就这两步。`install.cmd` 会自动绕过 PowerShell 执行策略并运行安装。卸载就双击 `uninstall.cmd`。
+
+### 方式二：命令行
+
 ```powershell
+git clone https://github.com/mazjq/agentping
+cd agentping
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
-它会：编译 → 部署到 `%LOCALAPPDATA%\AgentPing\` → **合并** Claude Code hooks 到 `~/.claude/settings.json`（先备份为 `.agentping.bak`）→ 注册开机自启 → 启动托盘。
+### 方式三：便携包（免编译）
 
-可选参数：`-NoStart`（只装不启动）、`-NoAutoStart`（不开机自启）、`-NoClaude`（不动 Claude 配置）。
+下载 Release 里的 `AgentPing-*.zip`（已含预编译 exe）→ 解压 → 双击 `install.cmd`。
+自己生成便携包：`powershell -ExecutionPolicy Bypass -File package.ps1` → 产物在 `dist\`。
+
+### 安装做了什么
+
+编译（若便携包已带 exe 则跳过）→ 部署到 `%LOCALAPPDATA%\AgentPing\` → **合并** Claude Code hooks 到
+`~/.claude/settings.json`（先备份 `.agentping.bak`，保留你已有的 hook）→ 写 Codex 的 `~/.codex/hooks.json`
+→ 注册开机自启 → 启动托盘。
+
+装完后 **重启正在运行的 Claude / Codex 会话**（hook 在会话启动时加载）。
+
+可选参数：`-NoStart`（只装不启动）、`-NoAutoStart`（不开机自启）、`-NoClaude`（不动 Claude 配置）、`-NoCodex`（不动 Codex 配置）。
 
 ### Claude Code（已自动接入）
 
@@ -91,6 +115,8 @@ agent-status-notifier/
 ├─ tests/Tests.cs           Core 的断言测试（38 项）
 ├─ build.ps1                用内置 csc 编译 -> bin/AgentPing.exe
 ├─ run-tests.ps1            编译并运行测试
+├─ package.ps1             打包自包含便携 zip -> dist/
+├─ install.cmd / uninstall.cmd   双击即装/卸载(绕过执行策略)
 ├─ install.ps1 / uninstall.ps1
 ├─ bin/AgentPing.exe        构建产物
 └─ hooks/
