@@ -35,19 +35,35 @@ if (Test-Path $claudeSettings) {
     }
 }
 
-# 2b. remove Codex hooks: ~/.codex/hooks.json (ours) + any old config.toml block
+# 2b. remove Codex hooks: ~/.codex/hooks.json (ours) + config.toml residue
 $codexDir = Join-Path $env:USERPROFILE ".codex"
-# config.toml old managed block (from earlier versions)
 $codexCfg = Join-Path $codexDir "config.toml"
 if (Test-Path $codexCfg) {
     $raw = Read-Utf8 $codexCfg
-    $beginMark = "# >>> AgentPing codex hooks (managed) >>>"
-    $endMark   = "# <<< AgentPing codex hooks (managed) <<<"
-    if ($raw -like "*$beginMark*") {
-        Copy-Item $codexCfg "$codexCfg.agentping.bak" -Force
-        $pattern = [regex]::Escape($beginMark) + "[\s\S]*?" + [regex]::Escape($endMark)
-        Write-Utf8 $codexCfg ([regex]::Replace($raw, $pattern, "").TrimEnd() + "`r`n")
-        Write-Host "Removed AgentPing codex hooks block from config.toml" -ForegroundColor Green
+    $orig = $raw
+    # (a) old managed [[hooks]] block from earlier versions
+    $bm = "# >>> AgentPing codex hooks (managed) >>>"
+    $em = "# <<< AgentPing codex hooks (managed) <<<"
+    if ($raw -like "*$bm*") {
+        $pat = [regex]::Escape($bm) + "[\s\S]*?" + [regex]::Escape($em)
+        $raw = [regex]::Replace($raw, $pat, "")
+    }
+    # (b) Codex's own [hooks.state.'...hooks.json...'] trust bookkeeping -> dangling after we delete hooks.json
+    $statePat = "(?m)^\[hooks\.state\.'[^']*hooks\.json[^']*'\]\s*\r?\n(?:trusted_hash\s*=\s*""[^""]*""\s*\r?\n?)?"
+    $raw = [regex]::Replace($raw, $statePat, "")
+    if ($raw -notmatch "(?m)^\[hooks\.state\.") {
+        $raw = [regex]::Replace($raw, "(?m)^\[hooks\.state\]\s*\r?\n", "")
+    }
+    # write only if changed AND we didn't accidentally drop the notify line (safety guard)
+    if ($raw -ne $orig) {
+        $notifyOk = ($orig -notmatch "(?m)^\s*notify\s*=") -or ($raw -match "(?m)^\s*notify\s*=")
+        if ($notifyOk) {
+            Copy-Item $codexCfg "$codexCfg.agentping.bak" -Force
+            Write-Utf8 $codexCfg ($raw.TrimEnd() + "`r`n")
+            Write-Host "Cleaned AgentPing residue from config.toml (notify untouched)" -ForegroundColor Green
+        } else {
+            Write-Host "Skipped config.toml edit (safety guard: notify line would be affected)." -ForegroundColor Yellow
+        }
     }
 }
 # hooks.json: if it only contains AgentPing hooks, delete it; else leave for manual edit
