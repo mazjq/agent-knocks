@@ -1,0 +1,8 @@
+# Build artifacts (built locally via build.ps1)
+bin/
+
+# Editor / OS junk
+.vs/
+*.user
+Thumbs.db
+desktop.ini
