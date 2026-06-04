@@ -4,6 +4,9 @@ bin/
 # Packaged distributables (built locally via package.ps1)
 dist/
 
+# Rust build output (rust/ port); Cargo.lock IS committed (binary app)
+rust/target/
+
 # Editor / OS junk
 .vs/
 *.user

@@ -1,0 +1,18 @@
+[package]
+name = "agentknocks"
+version = "0.1.0"
+edition = "2021"
+description = "Tiny tray status light for AI coding agents — knocks when an agent needs you or finishes."
+license = "MIT"
+
+[[bin]]
+name = "agentknocks"
+path = "src/main.rs"
+
+# Small release binary (the whole point of the Rust rewrite).
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
