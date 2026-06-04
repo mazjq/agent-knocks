@@ -92,6 +92,12 @@ fn t_quit(l: Lang) -> &'static str {
         Lang::Zh => "❌ 退出",
     }
 }
+fn t_autostart(l: Lang) -> &'static str {
+    match l {
+        Lang::En => "⏻ Start at login",
+        Lang::Zh => "⏻ 开机自启",
+    }
+}
 
 // ---- icon / colors ----
 
@@ -190,6 +196,7 @@ struct Ids {
     test_done: MenuId,
     lang_en: MenuId,
     lang_zh: MenuId,
+    start_login: MenuId,
 }
 
 fn build_menu(app: &App, agg: Status, l: Lang, muted: bool) -> (Menu, Ids) {
@@ -241,6 +248,7 @@ fn build_menu(app: &App, agg: Status, l: Lang, muted: bool) -> (Menu, Ids) {
     let _ = language.append(&lang_en);
     let _ = language.append(&lang_zh);
 
+    let start_login = CheckMenuItem::new(t_autostart(l), true, autostart_enabled(), None);
     let quit = MenuItem::new(t_quit(l), true, None);
 
     let ids = Ids {
@@ -251,12 +259,14 @@ fn build_menu(app: &App, agg: Status, l: Lang, muted: bool) -> (Menu, Ids) {
         test_done: test_done.id().clone(),
         lang_en: lang_en.id().clone(),
         lang_zh: lang_zh.id().clone(),
+        start_login: start_login.id().clone(),
     };
 
     let _ = menu.append(&mute);
     let _ = menu.append(&test);
     let _ = menu.append(&open);
     let _ = menu.append(&language);
+    let _ = menu.append(&start_login);
     let _ = menu.append(&PredefinedMenuItem::separator());
     let _ = menu.append(&quit);
 
@@ -314,6 +324,41 @@ fn save_config(root: &Path, muted: bool, l: Lang) {
     let content = format!("{{\"muted\":{},\"lang\":\"{}\"}}", muted, lang);
     let _ = std::fs::create_dir_all(root);
     let _ = std::fs::write(root.join("config.json"), content);
+}
+
+// ---- autostart (Windows HKCU Run, path quoted like the C# build) ----
+// (Cross-platform auto-launch — macOS LaunchAgent / Linux .desktop — lands when
+// those targets are added.)
+
+const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+const RUN_NAME: &str = "AgentKnocks";
+
+pub fn set_autostart(on: bool) {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    if let Ok((run, _)) = hkcu.create_subkey(RUN_KEY) {
+        if on {
+            let val = format!("\"{}\"", exe.display());
+            let _ = run.set_value(RUN_NAME, &val);
+        } else {
+            let _ = run.delete_value(RUN_NAME);
+        }
+    }
+}
+
+fn autostart_enabled() -> bool {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    hkcu.open_subkey(RUN_KEY)
+        .ok()
+        .and_then(|run| run.get_value::<String, _>(RUN_NAME).ok())
+        .is_some()
 }
 
 // ---- Win32 message pump ----
@@ -392,6 +437,9 @@ pub fn run() {
             } else if ev.id == ids.lang_zh {
                 lang = Lang::Zh;
                 save_config(&root, muted, lang);
+                ids = refresh(&tray, &app, agg, lang, muted);
+            } else if ev.id == ids.start_login {
+                set_autostart(!autostart_enabled());
                 ids = refresh(&tray, &app, agg, lang, muted);
             }
         }
