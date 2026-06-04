@@ -3,40 +3,27 @@
 //            file, exits. Pure observer (no stdout, exit 0) — never blocks the agent.
 //   default: the resident tray (not yet implemented in the Rust port; the C# build
 //            still ships the tray until this reaches parity).
+mod app;
 mod core;
+use app::{data_root, now_unix};
 use core::*;
 
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--emit") {
         std::process::exit(emit(&args));
     }
-    eprintln!("Agent Knocks (Rust port): tray UI not implemented yet — use --emit. (C# build ships the tray.)");
-}
-
-// ---- paths ----
-
-// Per-platform data root. Windows: %LOCALAPPDATA%\AgentKnocks.
-// (A `dirs`-crate-based version will replace this when the tray lands.)
-fn data_root() -> PathBuf {
-    if let Ok(local) = std::env::var("LOCALAPPDATA") {
-        return PathBuf::from(local).join("AgentKnocks");
+    if args.iter().any(|a| a == "--once") {
+        app::run_once(data_root());
+        return;
     }
-    if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home).join(".local/share/AgentKnocks");
-    }
-    PathBuf::from("AgentKnocks")
-}
-
-fn now_unix() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    // Headless watch loop for now; the tray-icon visual layers on top next slice.
+    // --watch-secs N exits after N seconds (testing).
+    let max = arg_val(&args, "--watch-secs").and_then(|s| s.parse::<u64>().ok());
+    app::run_headless(data_root(), max);
 }
 
 // ---- emit mode ----
