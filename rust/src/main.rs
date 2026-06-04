@@ -3,6 +3,10 @@
 //            file, exits. Pure observer (no stdout, exit 0) — never blocks the agent.
 //   default: the resident tray (not yet implemented in the Rust port; the C# build
 //            still ships the tray until this reaches parity).
+// No console window in release (like the C# winexe): the tray runs detached, and
+// emit hooks don't flash a console. Debug builds keep a console for dev/test stdout.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod app;
 mod core;
 #[cfg(windows)]
