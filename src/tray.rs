@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu};
-use tray_icon::{Icon, TrayIconBuilder};
+use tray_icon::{Icon, MouseButton, TrayIconBuilder, TrayIconEvent};
 
 // ---- language ----
 
@@ -96,6 +96,18 @@ fn t_autostart(l: Lang) -> &'static str {
     match l {
         Lang::En => "⏻ Start at login",
         Lang::Zh => "⏻ 开机自启",
+    }
+}
+fn t_head_wait(l: Lang) -> &'static str {
+    match l {
+        Lang::En => "needs your confirmation",
+        Lang::Zh => "需要你确认",
+    }
+}
+fn t_head_done(l: Lang) -> &'static str {
+    match l {
+        Lang::En => "done",
+        Lang::Zh => "处理完成",
     }
 }
 
@@ -361,6 +373,49 @@ fn autostart_enabled() -> bool {
         .is_some()
 }
 
+// ---- notification toast + click-to-focus ----
+
+// Show a Windows toast (POWERSHELL_APP_ID works for unpackaged apps; branding is
+// "Windows PowerShell" until a custom AppUserModelID is registered).
+fn show_toast(title: &str, body: &str) {
+    use tauri_winrt_notification::Toast;
+    let _ = Toast::new(Toast::POWERSHELL_APP_ID)
+        .title(title)
+        .text1(body)
+        .show();
+}
+
+// Bring the captured window to the foreground (restoring if minimized).
+fn focus_window(hwnd: i64) {
+    if hwnd == 0 {
+        return;
+    }
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE,
+    };
+    unsafe {
+        let h = hwnd as isize as HWND;
+        if IsIconic(h) != 0 {
+            ShowWindow(h, SW_RESTORE);
+        }
+        SetForegroundWindow(h);
+    }
+}
+
+// Focus the window of the highest-priority session (waiting first) that has a handle.
+fn focus_top_session(app: &App) {
+    let mut sessions = app.sessions();
+    sessions.sort_by(|a, b| {
+        (b.state as i32)
+            .cmp(&(a.state as i32))
+            .then(b.updated.cmp(&a.updated))
+    });
+    if let Some(s) = sessions.iter().find(|s| s.hwnd != 0) {
+        focus_window(s.hwnd);
+    }
+}
+
 // ---- Win32 message pump ----
 
 fn pump() {
@@ -393,6 +448,8 @@ pub fn run() {
         .with_menu(Box::new(menu))
         .build()
         .expect("build tray icon");
+    // left-click = jump to the agent that needs you; right-click = menu
+    let _ = tray.set_show_menu_on_left_click(false);
 
     let (tx, rx) = std::sync::mpsc::channel();
     let mut watcher = recommended_watcher(move |r| {
@@ -402,6 +459,7 @@ pub fn run() {
     let _ = watcher.watch(&app.state_dir, RecursiveMode::NonRecursive);
 
     let menu_rx = MenuEvent::receiver();
+    let tray_rx = TrayIconEvent::receiver();
     let mut last_tick = Instant::now();
 
     // rebuild menu+tooltip (labels depend on lang/muted/sessions)
@@ -444,6 +502,17 @@ pub fn run() {
             }
         }
 
+        // left-click the tray dot -> focus the agent that needs you
+        while let Ok(ev) = tray_rx.try_recv() {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                ..
+            } = ev
+            {
+                focus_top_session(&app);
+            }
+        }
+
         let mut changed = false;
         while rx.try_recv().is_ok() {
             changed = true;
@@ -459,10 +528,19 @@ pub fn run() {
             agg = a;
             let _ = tray.set_icon(Some(dot_icon(color(agg))));
             ids = refresh(&tray, &app, agg, lang, muted);
-            if !muted {
-                for c in &cues {
+            for c in &cues {
+                if !muted {
                     let _ = sound.send(if c.waiting { Cue::Waiting } else { Cue::Done });
                 }
+                let head = if c.waiting {
+                    t_head_wait(lang)
+                } else {
+                    t_head_done(lang)
+                };
+                show_toast(
+                    &format!("{} · {}", c.session.agent, head),
+                    &format!("{} #{}", c.session.title, c.session.tag),
+                );
             }
         }
 

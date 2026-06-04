@@ -129,15 +129,25 @@ fn emit(args: &[String]) -> i32 {
         title = agent.clone();
     }
 
+    // capture the window the user is looking at when this hook fires (for click-to-focus);
+    // fall back to the previously stored handle if none.
+    let mut hwnd = foreground_hwnd();
+    if hwnd == 0 && file.exists() {
+        if let Ok(prev) = std::fs::read_to_string(&file) {
+            hwnd = json_long(&prev, "hwnd");
+        }
+    }
+
     let norm = status_norm(&status);
     let ts = now_unix();
     let json = format!(
-        "{{\"agent\":\"{}\",\"session\":\"{}\",\"status\":\"{}\",\"title\":\"{}\",\"ts\":{}}}",
+        "{{\"agent\":\"{}\",\"session\":\"{}\",\"status\":\"{}\",\"title\":\"{}\",\"ts\":{},\"hwnd\":{}}}",
         json_esc(&agent),
         json_esc(&session),
         norm,
         json_esc(&title),
-        ts
+        ts,
+        hwnd
     );
 
     // atomic-ish: write tmp then rename
@@ -150,6 +160,16 @@ fn emit(args: &[String]) -> i32 {
 }
 
 // ---- helpers ----
+
+#[cfg(windows)]
+fn foreground_hwnd() -> i64 {
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    unsafe { GetForegroundWindow() as i64 }
+}
+#[cfg(not(windows))]
+fn foreground_hwnd() -> i64 {
+    0
+}
 
 fn arg_val(args: &[String], name: &str) -> Option<String> {
     let mut i = 0;

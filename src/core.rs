@@ -130,6 +130,7 @@ pub struct Session {
     pub tag: String, // short session tag, disambiguates same-project windows
     pub state: Status,
     pub updated: i64, // unix seconds
+    pub hwnd: i64,    // foreground window handle captured at emit time (0 if none); click-to-focus
 }
 
 impl Session {
@@ -151,6 +152,7 @@ impl Session {
             tag,
             state,
             updated,
+            hwnd: json_long(json, "hwnd"),
         })
     }
 }
