@@ -1,8 +1,8 @@
-// AgentPing 核心逻辑测试 (自包含断言 runner, 与 Core.cs 一起编译)
-// 运行: run-tests.ps1  ; 退出码 0=全过, 1=有失败
+// Agent Status Light core tests (self-contained assert runner, compiled with Core.cs)
+// Run: run-tests.ps1  ; exit code 0=all pass, 1=failures
 using System;
 using System.Collections.Generic;
-using AgentPing;
+using AgentStatusLight;
 
 static class Tests
 {

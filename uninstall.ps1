@@ -1,4 +1,4 @@
-# AgentPing uninstaller
+# AgentStatusLight uninstaller
 #   - stops the running instance
 #   - removes Claude Code hooks we added (keeps your other hooks)
 #   - removes autostart entry
@@ -11,18 +11,18 @@ function Read-Utf8($p)  { return [System.IO.File]::ReadAllText($p, [System.Text.
 function Write-Utf8($p, $text) { [System.IO.File]::WriteAllText($p, $text, $Utf8NoBom) }
 
 # 1. stop
-Get-Process AgentPing -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process AgentStatusLight -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 300
 
 # 2. remove our Claude hooks
 $claudeSettings = Join-Path $env:USERPROFILE ".claude\settings.json"
 if (Test-Path $claudeSettings) {
-    Copy-Item $claudeSettings "$claudeSettings.agentping.bak" -Force
+    Copy-Item $claudeSettings "$claudeSettings.agentstatuslight.bak" -Force
     $json = Read-Utf8 $claudeSettings | ConvertFrom-Json
     if ($json.hooks) {
         foreach ($evt in @($json.hooks.PSObject.Properties.Name)) {
             $kept = @($json.hooks.$evt | Where-Object {
-                -not ($_.hooks | Where-Object { $_.command -like "*AgentPing*" })
+                -not ($_.hooks | Where-Object { $_.command -like "*AgentStatusLight*" })
             })
             if ($kept.Count -eq 0) {
                 $json.hooks.PSObject.Properties.Remove($evt)
@@ -31,7 +31,7 @@ if (Test-Path $claudeSettings) {
             }
         }
         Write-Utf8 $claudeSettings ($json | ConvertTo-Json -Depth 50)
-        Write-Host "Removed AgentPing hooks from Claude settings.json" -ForegroundColor Green
+        Write-Host "Removed AgentStatusLight hooks from Claude settings.json" -ForegroundColor Green
     }
 }
 
@@ -42,8 +42,8 @@ if (Test-Path $codexCfg) {
     $raw = Read-Utf8 $codexCfg
     $orig = $raw
     # (a) old managed [[hooks]] block from earlier versions
-    $bm = "# >>> AgentPing codex hooks (managed) >>>"
-    $em = "# <<< AgentPing codex hooks (managed) <<<"
+    $bm = "# >>> AgentStatusLight codex hooks (managed) >>>"
+    $em = "# <<< AgentStatusLight codex hooks (managed) <<<"
     if ($raw -like "*$bm*") {
         $pat = [regex]::Escape($bm) + "[\s\S]*?" + [regex]::Escape($em)
         $raw = [regex]::Replace($raw, $pat, "")
@@ -58,52 +58,52 @@ if (Test-Path $codexCfg) {
     if ($raw -ne $orig) {
         $notifyOk = ($orig -notmatch "(?m)^\s*notify\s*=") -or ($raw -match "(?m)^\s*notify\s*=")
         if ($notifyOk) {
-            Copy-Item $codexCfg "$codexCfg.agentping.bak" -Force
+            Copy-Item $codexCfg "$codexCfg.agentstatuslight.bak" -Force
             Write-Utf8 $codexCfg ($raw.TrimEnd() + "`r`n")
-            Write-Host "Cleaned AgentPing residue from config.toml (notify untouched)" -ForegroundColor Green
+            Write-Host "Cleaned AgentStatusLight residue from config.toml (notify untouched)" -ForegroundColor Green
         } else {
             Write-Host "Skipped config.toml edit (safety guard: notify line would be affected)." -ForegroundColor Yellow
         }
     }
 }
-# hooks.json: if it only contains AgentPing hooks, delete it; else leave for manual edit
+# hooks.json: if it only contains AgentStatusLight hooks, delete it; else leave for manual edit
 $hooksJson = Join-Path $codexDir "hooks.json"
 if (Test-Path $hooksJson) {
     $hj = Read-Utf8 $hooksJson
-    if ($hj -like "*AgentPing*") {
-        Copy-Item $hooksJson "$hooksJson.agentping.bak" -Force
+    if ($hj -like "*AgentStatusLight*") {
+        Copy-Item $hooksJson "$hooksJson.agentstatuslight.bak" -Force
         try { $obj = $hj | ConvertFrom-Json } catch { $obj = $null }
         $onlyOurs = $true
         if ($obj -and $obj.hooks) {
             foreach ($evt in $obj.hooks.PSObject.Properties.Name) {
                 foreach ($grp in @($obj.hooks.$evt)) {
                     foreach ($h in @($grp.hooks)) {
-                        if ($h.command -notlike "*AgentPing*") { $onlyOurs = $false }
+                        if ($h.command -notlike "*AgentStatusLight*") { $onlyOurs = $false }
                     }
                 }
             }
         }
         if ($onlyOurs) {
             Remove-Item $hooksJson -Force
-            Write-Host "Removed ~/.codex/hooks.json (AgentPing-only)" -ForegroundColor Green
+            Write-Host "Removed ~/.codex/hooks.json (AgentStatusLight-only)" -ForegroundColor Green
         } else {
-            Write-Host "hooks.json has non-AgentPing entries; backed up to .agentping.bak - edit it manually to remove AgentPing lines." -ForegroundColor Yellow
+            Write-Host "hooks.json has non-AgentStatusLight entries; backed up to .agentstatuslight.bak - edit it manually to remove AgentStatusLight lines." -ForegroundColor Yellow
         }
     }
 }
 
 # 3. autostart
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-if (Get-ItemProperty -Path $runKey -Name "AgentPing" -ErrorAction SilentlyContinue) {
-    Remove-ItemProperty -Path $runKey -Name "AgentPing"
+if (Get-ItemProperty -Path $runKey -Name "AgentStatusLight" -ErrorAction SilentlyContinue) {
+    Remove-ItemProperty -Path $runKey -Name "AgentStatusLight"
     Write-Host "Removed autostart entry" -ForegroundColor Green
 }
 
 # 4. install dir
-$installDir = Join-Path $env:LOCALAPPDATA "AgentPing"
+$installDir = Join-Path $env:LOCALAPPDATA "AgentStatusLight"
 if (Test-Path $installDir) {
     if ($KeepState) {
-        Remove-Item (Join-Path $installDir "AgentPing.exe") -Force -ErrorAction SilentlyContinue
+        Remove-Item (Join-Path $installDir "AgentStatusLight.exe") -Force -ErrorAction SilentlyContinue
         Write-Host "Removed exe, kept state/config ($installDir)" -ForegroundColor Green
     } else {
         Remove-Item $installDir -Recurse -Force

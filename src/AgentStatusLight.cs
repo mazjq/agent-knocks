@@ -1,8 +1,8 @@
-// AgentPing - 轻量级 agent 状态托盘提示器 (UI + emit 入口)
-// 纯状态逻辑见 Core.cs。两种模式:
-//   1. 默认:    常驻托盘, FileSystemWatcher 监听状态目录, 聚合 + 变色 + 声音 + 气泡
-//   2. --emit:  被 agent hook 调用, 读 stdin(JSON)+参数, 写/删状态文件后立即退出
-// 仅 C# 5 语法 (旧版 csc.exe); 用 /codepage:65001 编译以保证中文字面量正确。
+// Agent Status Light - lightweight tray status indicator for AI coding agents (UI + emit entry).
+// Pure state logic lives in Core.cs. Two modes:
+//   1. default:  resident tray, FileSystemWatcher on the state dir, aggregate + recolor + sound + balloon
+//   2. --emit:   invoked by an agent hook; reads stdin(JSON)+args, writes/removes a state file, exits
+// C# 5 syntax only (in-box csc.exe). Build with /codepage:65001 so non-ASCII string literals are correct.
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -14,8 +14,58 @@ using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
-namespace AgentPing
+namespace AgentStatusLight
 {
+    static class App
+    {
+        public const string Name = "Agent Status Light";   // display name
+        public const string Id = "AgentStatusLight";        // install dir / registry / mutex key
+    }
+
+    // ======================================================================
+    //  I18n: all user-facing strings. Default English; 中文 optional via tray menu.
+    // ======================================================================
+    static class I18n
+    {
+        public static string Cur = "en";                    // "en" | "zh"
+        static bool Zh { get { return Cur == "zh"; } }
+        public static bool IsValid(string c) { return c == "en" || c == "zh"; }
+
+        public static string Status(AgentStatusLight.Status s)
+        {
+            switch (s)
+            {
+                case AgentStatusLight.Status.Waiting:    return Zh ? "等待确认" : "Waiting";
+                case AgentStatusLight.Status.Processing: return Zh ? "处理中"   : "Working";
+                case AgentStatusLight.Status.Done:       return Zh ? "已完成"   : "Done";
+                default:                                 return Zh ? "空闲"     : "Idle";
+            }
+        }
+
+        public static string CountSuffix(StateStore st)
+        {
+            int w, p, d; st.Counts(out w, out p, out d);
+            if (w + p + d == 0) return "";
+            List<string> parts = new List<string>();
+            if (w > 0) parts.Add(w + (Zh ? " 等待"   : " waiting"));
+            if (p > 0) parts.Add(p + (Zh ? " 处理中" : " working"));
+            if (d > 0) parts.Add(d + (Zh ? " 完成"   : " done"));
+            return parts.Count > 0 ? "  (" + string.Join(", ", parts.ToArray()) + ")" : "";
+        }
+
+        public static string Mute(bool muted) { return muted ? (Zh ? "🔔 取消静音" : "🔔 Unmute") : (Zh ? "🔇 静音" : "🔇 Mute"); }
+        public static string TestSound  { get { return Zh ? "🔊 测试声音"      : "🔊 Test sound"; } }
+        public static string SoundWait  { get { return Zh ? "等待确认音"        : "Waiting sound"; } }
+        public static string SoundDone  { get { return Zh ? "完成音"            : "Done sound"; } }
+        public static string OpenDir    { get { return Zh ? "📁 打开状态目录"   : "📁 Open state folder"; } }
+        public static string AutoStart  { get { return Zh ? "⏻ 开机自启"        : "⏻ Start at login"; } }
+        public static string Language   { get { return Zh ? "🌐 语言"           : "🌐 Language"; } }
+        public static string Quit       { get { return Zh ? "❌ 退出"           : "❌ Quit"; } }
+        public static string NoSessions { get { return Zh ? "（无活动会话）"     : "(no active sessions)"; } }
+        public static string HeadWait   { get { return Zh ? "需要你确认"         : "Needs your confirmation"; } }
+        public static string HeadDone   { get { return Zh ? "处理完成"           : "Done"; } }
+    }
+
     static class Paths
     {
         public static string Root
@@ -24,7 +74,7 @@ namespace AgentPing
             {
                 return Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "AgentPing");
+                    App.Id);
             }
         }
         public static string StateDir { get { return Path.Combine(Root, "state"); } }
@@ -42,7 +92,7 @@ namespace AgentPing
                 if (args[i] == "--emit") return EmitMode.Run(args);
 
             bool createdNew;
-            using (Mutex mtx = new Mutex(true, "AgentPing_Tray_Singleton_2026", out createdNew))
+            using (Mutex mtx = new Mutex(true, App.Id + "_Tray_Singleton_2026", out createdNew))
             {
                 if (!createdNew) return 0;
                 Application.EnableVisualStyles();
@@ -54,7 +104,7 @@ namespace AgentPing
     }
 
     // ======================================================================
-    //  EMIT 模式
+    //  EMIT mode
     // ======================================================================
     static class EmitMode
     {
@@ -68,7 +118,7 @@ namespace AgentPing
                 string keyArg = ArgVal(args, "--key", null);
                 string stdin = ReadStdin();
 
-                // 解析会话 id / 工作目录
+                // resolve session id / working dir
                 string session = keyArg;
                 if (string.IsNullOrEmpty(session)) session = J.Str(stdin, "session_id");
                 if (string.IsNullOrEmpty(session)) session = J.Str(stdin, "session");
@@ -80,7 +130,7 @@ namespace AgentPing
                 if (string.IsNullOrEmpty(title) && !string.IsNullOrEmpty(cwd)) title = LastSegment(cwd);
                 bool titleResolved = !string.IsNullOrEmpty(title);
 
-                // 状态推断
+                // status inference
                 string blob = stdin;
                 for (int i = 0; i < args.Length; i++) blob += " " + args[i];
                 if (status == "auto") status = Infer.Auto(blob);
@@ -94,7 +144,7 @@ namespace AgentPing
 
                 Log(agent, status, key, stdin);
 
-                // 空操作: 闲置提醒等无需改变状态的事件, 记日志后直接退出(不碰状态文件)
+                // no-op: idle reminders etc. that should not change state; log then exit (don't touch the file)
                 if (status == "ignore") return 0;
 
                 if (status == "end" || status == "exit")
@@ -103,7 +153,7 @@ namespace AgentPing
                     return 0;
                 }
 
-                // 没解析到真实 title 时沿用旧值, 避免项目名被覆盖
+                // when no real title parsed, keep the previous one so the project name isn't overwritten
                 if (!titleResolved && File.Exists(file))
                 {
                     try
@@ -127,10 +177,10 @@ namespace AgentPing
                 File.Move(tmp, file);
                 return 0;
             }
-            catch { return 0; } // emit 永不打断 agent
+            catch { return 0; } // emit never disrupts the agent
         }
 
-        // 事件日志 (诊断用), 超过 200KB 自动重置
+        // event log (diagnostics), auto-reset past 200KB
         static void Log(string agent, string status, string key, string stdin)
         {
             try
@@ -191,7 +241,7 @@ namespace AgentPing
     }
 
     // ======================================================================
-    //  托盘模式
+    //  Tray mode
     // ======================================================================
     class TrayContext : ApplicationContext
     {
@@ -201,9 +251,9 @@ namespace AgentPing
         readonly NotifyIcon tray;
         readonly ContextMenuStrip menu;
         readonly FileSystemWatcher watcher;
-        readonly System.Windows.Forms.Timer periodic;  // 周期刷新(耗时显示/过期淘汰)
-        readonly System.Windows.Forms.Timer debounce;   // 文件变化后快速响应
-        readonly Form pump;                              // 隐藏窗口: 给 watcher 提供 UI 线程 marshaling 目标
+        readonly System.Windows.Forms.Timer periodic;  // periodic refresh (elapsed display / TTL prune)
+        readonly System.Windows.Forms.Timer debounce;   // quick response after a file change
+        readonly Form pump;                              // hidden window: marshals watcher events to the UI thread
         readonly SoundEngine sound;
         readonly StateStore store = new StateStore();
         readonly Icon[] icons = new Icon[4];
@@ -219,19 +269,19 @@ namespace AgentPing
 
             for (int i = 0; i < 4; i++) icons[i] = MakeDotIcon(ColorFor((Status)i));
 
-            // 隐藏窗口, 仅用于把后台线程的 watcher 事件 marshal 到 UI 线程 (不显示, 无闪烁)
+            // hidden window, only to marshal background watcher events onto the UI thread (not shown, no flicker)
             pump = new Form();
             pump.ShowInTaskbar = false;
             pump.FormBorderStyle = FormBorderStyle.None;
             pump.StartPosition = FormStartPosition.Manual;
             pump.Location = new Point(-32000, -32000);
             pump.Size = new Size(1, 1);
-            { IntPtr force = pump.Handle; } // 强制创建句柄
+            { IntPtr force = pump.Handle; } // force handle creation
 
             menu = new ContextMenuStrip();
             tray = new NotifyIcon();
             tray.Icon = icons[(int)Status.Idle];
-            tray.Text = "AgentPing — 空闲";
+            tray.Text = App.Name + " — " + I18n.Status(Status.Idle);
             tray.Visible = true;
             tray.ContextMenuStrip = menu;
             tray.DoubleClick += delegate { OpenStateDir(); };
@@ -243,15 +293,15 @@ namespace AgentPing
             watcher.Created += onChange;
             watcher.Deleted += onChange;
             watcher.Renamed += delegate { KickDebounce(); };
-            watcher.SynchronizingObject = pump; // 事件改在 UI 线程触发 -> 防抖定时器可正常工作
+            watcher.SynchronizingObject = pump; // raise events on the UI thread -> debounce timer works
             watcher.EnableRaisingEvents = true;
 
-            // 文件变化 -> 120ms 后刷新 (合并连发, 近乎即时)
+            // file change -> refresh after 120ms (coalesce bursts, near-instant)
             debounce = new System.Windows.Forms.Timer();
             debounce.Interval = 120;
             debounce.Tick += delegate { debounce.Stop(); Reload(); };
 
-            // 周期刷新: 更新耗时显示 + 过期淘汰
+            // periodic refresh: update elapsed display + TTL prune
             periodic = new System.Windows.Forms.Timer();
             periodic.Interval = 2000;
             periodic.Tick += delegate { Reload(); };
@@ -262,7 +312,7 @@ namespace AgentPing
 
         void KickDebounce()
         {
-            // watcher.SynchronizingObject = pump 保证本回调已在 UI 线程, 防抖定时器可安全启停
+            // watcher.SynchronizingObject = pump ensures this callback is already on the UI thread
             debounce.Stop();
             debounce.Start();
         }
@@ -295,14 +345,14 @@ namespace AgentPing
 
             currentAgg = store.Aggregate();
             tray.Icon = icons[(int)currentAgg];
-            tray.Text = Truncate("AgentPing — " + StatusMap.Label(currentAgg) + store.CountSuffix(), 63);
+            tray.Text = Truncate(App.Name + " — " + I18n.Status(currentAgg) + I18n.CountSuffix(store), 63);
 
             WriteHeartbeat(currentAgg, store.Count);
             BuildMenu();
         }
 
         string lastHeartbeat = null;
-        // 把当前聚合状态写到 status.json (供外部查询; 仅状态/数量变化时写)
+        // write the current aggregate status to status.json (for external consumers; only on status/count change)
         void WriteHeartbeat(Status agg, int n)
         {
             try
@@ -323,7 +373,7 @@ namespace AgentPing
             if (!muted) sound.Play(waiting ? Cue.Waiting : Cue.Done);
             try
             {
-                string head = waiting ? "需要你确认" : "处理完成";
+                string head = waiting ? I18n.HeadWait : I18n.HeadDone;
                 tray.ShowBalloonTip(2500, s.Agent + " · " + head, Label(s), ToolTipIcon.None);
             }
             catch { }
@@ -331,12 +381,12 @@ namespace AgentPing
 
         static string Label(Session s) { return s.Title + " #" + s.Tag; }
 
-        // ---- 菜单 ----
+        // ---- menu ----
         void BuildMenu()
         {
             menu.Items.Clear();
 
-            ToolStripMenuItem header = new ToolStripMenuItem(StatusMap.Label(currentAgg) + store.CountSuffix());
+            ToolStripMenuItem header = new ToolStripMenuItem(I18n.Status(currentAgg) + I18n.CountSuffix(store));
             header.Enabled = false;
             menu.Items.Add(header);
             menu.Items.Add(new ToolStripSeparator());
@@ -344,7 +394,7 @@ namespace AgentPing
             IList<Session> list = store.Sessions;
             if (list.Count == 0)
             {
-                ToolStripMenuItem none = new ToolStripMenuItem("（无活动会话）");
+                ToolStripMenuItem none = new ToolStripMenuItem(I18n.NoSessions);
                 none.Enabled = false;
                 menu.Items.Add(none);
             }
@@ -359,7 +409,7 @@ namespace AgentPing
                 foreach (Session s in sorted)
                 {
                     string line = StatusMap.Glyph(s.State) + " " + s.Agent + " · " +
-                                  StatusMap.Label(s.State) + " · " + Elapsed(s.Updated) + "  [" + Label(s) + "]";
+                                  I18n.Status(s.State) + " · " + Elapsed(s.Updated) + "  [" + Label(s) + "]";
                     ToolStripMenuItem it = new ToolStripMenuItem(line);
                     it.Enabled = false;
                     menu.Items.Add(it);
@@ -368,33 +418,52 @@ namespace AgentPing
 
             menu.Items.Add(new ToolStripSeparator());
 
-            ToolStripMenuItem mute = new ToolStripMenuItem(muted ? "🔔 取消静音" : "🔇 静音");
+            ToolStripMenuItem mute = new ToolStripMenuItem(I18n.Mute(muted));
             mute.Click += delegate { muted = !muted; SaveConfig(); BuildMenu(); };
             menu.Items.Add(mute);
 
-            ToolStripMenuItem test = new ToolStripMenuItem("🔊 测试声音");
-            ToolStripMenuItem tWait = new ToolStripMenuItem("等待确认音");
+            ToolStripMenuItem test = new ToolStripMenuItem(I18n.TestSound);
+            ToolStripMenuItem tWait = new ToolStripMenuItem(I18n.SoundWait);
             tWait.Click += delegate { sound.Play(Cue.Waiting); };
-            ToolStripMenuItem tDone = new ToolStripMenuItem("完成音");
+            ToolStripMenuItem tDone = new ToolStripMenuItem(I18n.SoundDone);
             tDone.Click += delegate { sound.Play(Cue.Done); };
             test.DropDownItems.Add(tWait);
             test.DropDownItems.Add(tDone);
             menu.Items.Add(test);
 
-            ToolStripMenuItem openDir = new ToolStripMenuItem("📁 打开状态目录");
+            ToolStripMenuItem openDir = new ToolStripMenuItem(I18n.OpenDir);
             openDir.Click += delegate { OpenStateDir(); };
             menu.Items.Add(openDir);
 
-            ToolStripMenuItem auto = new ToolStripMenuItem("⏻ 开机自启");
+            ToolStripMenuItem lang = new ToolStripMenuItem(I18n.Language);
+            ToolStripMenuItem en = new ToolStripMenuItem("English");
+            en.Checked = (I18n.Cur == "en");
+            en.Click += delegate { SetLang("en"); };
+            ToolStripMenuItem zh = new ToolStripMenuItem("中文");
+            zh.Checked = (I18n.Cur == "zh");
+            zh.Click += delegate { SetLang("zh"); };
+            lang.DropDownItems.Add(en);
+            lang.DropDownItems.Add(zh);
+            menu.Items.Add(lang);
+
+            ToolStripMenuItem auto = new ToolStripMenuItem(I18n.AutoStart);
             auto.Checked = IsAutoStart();
             auto.Click += delegate { SetAutoStart(!IsAutoStart()); BuildMenu(); };
             menu.Items.Add(auto);
 
             menu.Items.Add(new ToolStripSeparator());
 
-            ToolStripMenuItem quit = new ToolStripMenuItem("❌ 退出");
+            ToolStripMenuItem quit = new ToolStripMenuItem(I18n.Quit);
             quit.Click += delegate { ExitApp(); };
             menu.Items.Add(quit);
+        }
+
+        void SetLang(string code)
+        {
+            if (!I18n.IsValid(code) || I18n.Cur == code) { BuildMenu(); return; }
+            I18n.Cur = code;
+            SaveConfig();
+            Reload();   // refresh tooltip + menu immediately
         }
 
         void ExitApp()
@@ -408,7 +477,7 @@ namespace AgentPing
             ExitThread();
         }
 
-        // ---- 绘制图标 ----
+        // ---- icon drawing ----
         static Color ColorFor(Status s)
         {
             switch (s)
@@ -458,9 +527,9 @@ namespace AgentPing
             catch { }
         }
 
-        // ---- 开机自启 ----
+        // ---- autostart ----
         const string RunKey = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-        const string RunName = "AgentPing";
+        static string RunName { get { return App.Id; } }
 
         bool IsAutoStart()
         {
@@ -486,14 +555,19 @@ namespace AgentPing
             catch { }
         }
 
-        // ---- 配置 ----
+        // ---- config ----
         void LoadConfig()
         {
             try
             {
                 if (File.Exists(Paths.ConfigFile))
-                    muted = System.Text.RegularExpressions.Regex.IsMatch(
-                        File.ReadAllText(Paths.ConfigFile), "\"muted\"\\s*:\\s*true");
+                {
+                    string cfg = File.ReadAllText(Paths.ConfigFile);
+                    muted = System.Text.RegularExpressions.Regex.IsMatch(cfg, "\"muted\"\\s*:\\s*true");
+                    System.Text.RegularExpressions.Match m =
+                        System.Text.RegularExpressions.Regex.Match(cfg, "\"lang\"\\s*:\\s*\"(\\w+)\"");
+                    if (m.Success && I18n.IsValid(m.Groups[1].Value)) I18n.Cur = m.Groups[1].Value;
+                }
             }
             catch { }
         }
@@ -503,8 +577,9 @@ namespace AgentPing
             try
             {
                 Paths.EnsureDirs();
-                File.WriteAllText(Paths.ConfigFile, "{\"muted\":" + (muted ? "true" : "false") + "}",
-                                  new UTF8Encoding(false));
+                File.WriteAllText(Paths.ConfigFile,
+                    "{\"muted\":" + (muted ? "true" : "false") + ",\"lang\":\"" + I18n.Cur + "\"}",
+                    new UTF8Encoding(false));
             }
             catch { }
         }
@@ -518,9 +593,9 @@ namespace AgentPing
     }
 
     // ======================================================================
-    //  声音引擎: Console.Beep 合成直觉化提示音 (零音频文件)
-    //   等待确认: 上升音 660->990 (像在问"在吗?", 引起注意/未完成感)
-    //   完成:     上行三连 770->1046->1318 (解决/积极感, "搞定~")
+    //  Sound engine: Console.Beep synthesizes intuitive earcons (zero audio files)
+    //   Waiting: rising 660->990 (like asking "you there?", draws attention / unfinished)
+    //   Done:    ascending triad 770->1046->1318 (resolved / positive, "all set")
     // ======================================================================
     class SoundEngine
     {

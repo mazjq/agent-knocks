@@ -1,4 +1,4 @@
-# Build a self-contained portable distributable -> dist\AgentPing-<date>.zip
+# Build a self-contained portable distributable -> dist\AgentStatusLight-<date>.zip
 # The zip includes the prebuilt exe AND the source + scripts, so the recipient can
 # either double-click install.cmd (uses the prebuilt exe, no build needed) or rebuild.
 $ErrorActionPreference = "Stop"
@@ -10,7 +10,7 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 # 2. stage files
 $stamp = Get-Date -Format "yyyyMMdd"
 $dist  = Join-Path $root "dist"
-$stage = Join-Path $dist "AgentPing"
+$stage = Join-Path $dist "AgentStatusLight"
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Path $stage | Out-Null
 
@@ -23,14 +23,14 @@ foreach ($f in $include) { Copy-Item (Join-Path $root $f) (Join-Path $stage $f) 
 
 # prebuilt exe (so install can skip building)
 New-Item -ItemType Directory -Path (Join-Path $stage "bin") | Out-Null
-Copy-Item (Join-Path $root "bin\AgentPing.exe") (Join-Path $stage "bin\AgentPing.exe") -Force
+Copy-Item (Join-Path $root "bin\AgentStatusLight.exe") (Join-Path $stage "bin\AgentStatusLight.exe") -Force
 
 # source (so recipient can rebuild if they want)
 Copy-Item (Join-Path $root "src")   (Join-Path $stage "src")   -Recurse -Force
 Copy-Item (Join-Path $root "hooks") (Join-Path $stage "hooks") -Recurse -Force
 
 # 3. zip it
-$zip = Join-Path $dist ("AgentPing-" + $stamp + ".zip")
+$zip = Join-Path $dist ("AgentStatusLight-" + $stamp + ".zip")
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path $stage -DestinationPath $zip -Force
 Remove-Item $stage -Recurse -Force

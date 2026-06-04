@@ -1,12 +1,12 @@
-// AgentPing 状态核心 (无 UI 依赖, 可被托盘与测试共用)
-// 仅 C# 5 语法 (旧版 csc.exe)
+// Agent Status Light - state core (no UI deps, shared by tray + tests)
+// C# 5 syntax only (in-box csc.exe). Language-neutral: all display text lives in the UI layer.
 using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace AgentPing
+namespace AgentStatusLight
 {
     // 优先级: Waiting > Processing > Done > Idle
     public enum Status { Idle = 0, Done = 1, Processing = 2, Waiting = 3 }
@@ -63,16 +63,7 @@ namespace AgentPing
             return "processing";
         }
 
-        public static string Label(Status s)
-        {
-            switch (s)
-            {
-                case Status.Waiting: return "等待确认";
-                case Status.Processing: return "处理中";
-                case Status.Done: return "已完成";
-                default: return "空闲";
-            }
-        }
+        // Display labels are localized in the UI layer (I18n). Core stays language-neutral.
 
         public static string Glyph(Status s)
         {
@@ -202,21 +193,16 @@ namespace AgentPing
             return agg;
         }
 
-        public string CountSuffix()
+        // Expose per-state counts; the UI formats them in the active language.
+        public void Counts(out int waiting, out int processing, out int done)
         {
-            if (sessions.Count == 0) return "";
-            int w = 0, p = 0, d = 0;
+            waiting = 0; processing = 0; done = 0;
             foreach (KeyValuePair<string, Session> kv in sessions)
             {
-                if (kv.Value.State == Status.Waiting) w++;
-                else if (kv.Value.State == Status.Processing) p++;
-                else if (kv.Value.State == Status.Done) d++;
+                if (kv.Value.State == Status.Waiting) waiting++;
+                else if (kv.Value.State == Status.Processing) processing++;
+                else if (kv.Value.State == Status.Done) done++;
             }
-            List<string> parts = new List<string>();
-            if (w > 0) parts.Add(w + " 等待");
-            if (p > 0) parts.Add(p + " 处理中");
-            if (d > 0) parts.Add(d + " 完成");
-            return parts.Count > 0 ? "  (" + string.Join(", ", parts.ToArray()) + ")" : "";
         }
     }
 

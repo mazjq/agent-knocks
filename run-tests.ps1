@@ -4,7 +4,7 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $core = Join-Path $root "src\Core.cs"
 $test = Join-Path $root "tests\Tests.cs"
 $bin  = Join-Path $root "bin"
-$out  = Join-Path $bin "AgentPing.Tests.exe"
+$out  = Join-Path $bin "AgentStatusLight.Tests.exe"
 if (-not (Test-Path $bin)) { New-Item -ItemType Directory -Path $bin | Out-Null }
 
 $csc = @(

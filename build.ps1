@@ -1,12 +1,12 @@
-# Build AgentPing.exe with the in-box .NET Framework compiler (csc.exe).
-# No SDK install required. Output -> .\bin\AgentPing.exe
+# Build AgentStatusLight.exe with the in-box .NET Framework compiler (csc.exe).
+# No SDK install required. Output -> .\bin\AgentStatusLight.exe
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$src  = Join-Path $root "src\AgentPing.cs"
+$src  = Join-Path $root "src\AgentStatusLight.cs"
 $core = Join-Path $root "src\Core.cs"
 $bin  = Join-Path $root "bin"
-$out  = Join-Path $bin  "AgentPing.exe"
+$out  = Join-Path $bin  "AgentStatusLight.exe"
 
 if (-not (Test-Path $bin)) { New-Item -ItemType Directory -Path $bin | Out-Null }
 
