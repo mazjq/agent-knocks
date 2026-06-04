@@ -1,8 +1,8 @@
-// Agent Status Light core tests (self-contained assert runner, compiled with Core.cs)
+// Agent Knocks core tests (self-contained assert runner, compiled with Core.cs)
 // Run: run-tests.ps1  ; exit code 0=all pass, 1=failures
 using System;
 using System.Collections.Generic;
-using AgentStatusLight;
+using AgentKnocks;
 
 static class Tests
 {

@@ -1,6 +1,6 @@
-# Agent Status Light installer
+# Agent Knocks installer
 #   - builds the exe (if needed)
-#   - deploys to %LOCALAPPDATA%\AgentStatusLight
+#   - deploys to %LOCALAPPDATA%\AgentKnocks
 #   - merges Claude Code hooks into ~/.claude/settings.json (backup first)
 #   - prints Codex setup note (manual, to avoid breaking existing notify)
 #   - optional: start now + register autostart
@@ -25,19 +25,19 @@ function Read-Utf8($p)  { return [System.IO.File]::ReadAllText($p, [System.Text.
 function Write-Utf8($p, $text) { [System.IO.File]::WriteAllText($p, $text, $Utf8NoBom) }
 
 # ---------- 1. build ----------
-$exeSrc = Join-Path $root "bin\AgentStatusLight.exe"
+$exeSrc = Join-Path $root "bin\AgentKnocks.exe"
 if (-not (Test-Path $exeSrc)) {
-    Write-Host "Building AgentStatusLight.exe ..."
+    Write-Host "Building AgentKnocks.exe ..."
     & (Join-Path $root "build.ps1")
 }
 
 # ---------- 2. deploy ----------
-$installDir = Join-Path $env:LOCALAPPDATA "AgentStatusLight"
+$installDir = Join-Path $env:LOCALAPPDATA "AgentKnocks"
 if (-not (Test-Path $installDir)) { New-Item -ItemType Directory -Path $installDir | Out-Null }
-$exe = Join-Path $installDir "AgentStatusLight.exe"
+$exe = Join-Path $installDir "AgentKnocks.exe"
 
 # stop a running instance so we can overwrite the exe
-Get-Process AgentStatusLight -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process AgentKnocks -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep -Milliseconds 300
 Copy-Item $exeSrc $exe -Force
 Write-Host "Deployed -> $exe" -ForegroundColor Green
@@ -49,11 +49,11 @@ function Add-ClaudeHook {
         $settings | Add-Member -NotePropertyName hooks -NotePropertyValue ([pscustomobject]@{}) -Force
     }
     $entry = [pscustomobject]@{ hooks = @([pscustomobject]@{ type = "command"; command = $command }) }
-    # remove any pre-existing Agent Status Light entry for this event, keep others
+    # remove any pre-existing Agent Knocks entry for this event, keep others
     $existing = $null
     if ($settings.hooks.PSObject.Properties.Name -contains $eventName) {
         $existing = @($settings.hooks.$eventName | Where-Object {
-            -not ($_.hooks | Where-Object { $_.command -like "*AgentStatusLight*" })
+            -not ($_.hooks | Where-Object { $_.command -like "*AgentKnocks*" })
         })
     }
     $merged = @()
@@ -65,7 +65,7 @@ function Add-ClaudeHook {
 if (-not $NoClaude) {
     $claudeSettings = Join-Path $env:USERPROFILE ".claude\settings.json"
     if (Test-Path $claudeSettings) {
-        $backup = "$claudeSettings.agentstatuslight.bak"
+        $backup = "$claudeSettings.agentknocks.bak"
         Copy-Item $claudeSettings $backup -Force
         Write-Host "Backed up Claude settings -> $backup" -ForegroundColor DarkGray
 
@@ -97,10 +97,10 @@ if (-not $NoCodex) {
         $codexCfg = Join-Path $codexDir "config.toml"
         if (Test-Path $codexCfg) {
             $raw = Read-Utf8 $codexCfg
-            $bm = "# >>> AgentStatusLight codex hooks (managed) >>>"
-            $em = "# <<< AgentStatusLight codex hooks (managed) <<<"
+            $bm = "# >>> AgentKnocks codex hooks (managed) >>>"
+            $em = "# <<< AgentKnocks codex hooks (managed) <<<"
             if ($raw -like "*$bm*") {
-                Copy-Item $codexCfg "$codexCfg.agentstatuslight.bak" -Force
+                Copy-Item $codexCfg "$codexCfg.agentknocks.bak" -Force
                 $pat = [regex]::Escape($bm) + "[\s\S]*?" + [regex]::Escape($em)
                 Write-Utf8 $codexCfg ([regex]::Replace($raw, $pat, "").TrimEnd() + "`r`n")
             }
@@ -108,9 +108,9 @@ if (-not $NoCodex) {
 
         # 2. write ~/.codex/hooks.json (hand-built so single-element arrays stay arrays)
         $hooksJson = Join-Path $codexDir "hooks.json"
-        if ((Test-Path $hooksJson) -and ((Read-Utf8 $hooksJson) -notlike "*AgentStatusLight*")) {
-            Copy-Item $hooksJson "$hooksJson.agentstatuslight.bak" -Force
-            Write-Host "NOTE: existing hooks.json backed up to .agentstatuslight.bak and replaced." -ForegroundColor Yellow
+        if ((Test-Path $hooksJson) -and ((Read-Utf8 $hooksJson) -notlike "*AgentKnocks*")) {
+            Copy-Item $hooksJson "$hooksJson.agentknocks.bak" -Force
+            Write-Host "NOTE: existing hooks.json backed up to .agentknocks.bak and replaced." -ForegroundColor Yellow
         }
         $exeJ = $exe -replace '\\', '\\'
         function JCmd([string]$st) { return '"\"' + $exeJ + '\" --emit --agent codex --status ' + $st + '"' }
@@ -137,18 +137,18 @@ if (-not $NoCodex) {
 # ---------- 4. autostart ----------
 if (-not $NoAutoStart) {
     $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-    Set-ItemProperty -Path $runKey -Name "AgentStatusLight" -Value ('"' + $exe + '"')
+    Set-ItemProperty -Path $runKey -Name "AgentKnocks" -Value ('"' + $exe + '"')
     Write-Host "Autostart registered (HKCU Run)" -ForegroundColor Green
 }
 
 # ---------- 5. start ----------
 if (-not $NoStart) {
     Start-Process -FilePath $exe
-    Write-Host "Agent Status Light started (check the system tray)" -ForegroundColor Green
+    Write-Host "Agent Knocks started (check the system tray)" -ForegroundColor Green
 }
 
 # ---------- 6. done ----------
 Write-Host ""
 Write-Host "Done. Right-click the tray icon for the menu." -ForegroundColor Green
 Write-Host "Restart any running Claude/Codex sessions so the new hooks load." -ForegroundColor Cyan
-Write-Host "Event log for debugging: %LOCALAPPDATA%\AgentStatusLight\events.log" -ForegroundColor DarkGray
+Write-Host "Event log for debugging: %LOCALAPPDATA%\AgentKnocks\events.log" -ForegroundColor DarkGray

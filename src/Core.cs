@@ -1,4 +1,4 @@
-// Agent Status Light - state core (no UI deps, shared by tray + tests)
+// Agent Knocks - state core (no UI deps, shared by tray + tests)
 // C# 5 syntax only (in-box csc.exe). Language-neutral: all display text lives in the UI layer.
 using System;
 using System.Collections.Generic;
@@ -6,7 +6,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace AgentStatusLight
+namespace AgentKnocks
 {
     // 优先级: Waiting > Processing > Done > Idle
     public enum Status { Idle = 0, Done = 1, Processing = 2, Waiting = 3 }

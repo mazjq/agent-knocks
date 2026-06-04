@@ -1,11 +1,11 @@
 # 接入任意 agent（pi 及其它）
 
-AgentStatusLight 的状态采集协议极简：**任何东西**只要在状态变化时调用一次 exe，即可被托盘聚合显示。
+AgentKnocks 的状态采集协议极简：**任何东西**只要在状态变化时调用一次 exe，即可被托盘聚合显示。
 
 ## 命令
 
 ```
-AgentStatusLight.exe --emit --agent <名称> --status <processing|waiting|done|end> [--key <会话ID>] [--title <显示名>]
+AgentKnocks.exe --emit --agent <名称> --status <processing|waiting|done|end> [--key <会话ID>] [--title <显示名>]
 ```
 
 - `--agent`  agent 名称，如 `pi` / `claude` / `codex`，决定托盘里那一行的标识。
@@ -23,7 +23,7 @@ AgentStatusLight.exe --emit --agent <名称> --status <processing|waiting|done|e
 ## 例子
 
 ```powershell
-$exe = "$env:LOCALAPPDATA\AgentStatusLight\AgentStatusLight.exe"
+$exe = "$env:LOCALAPPDATA\AgentKnocks\AgentKnocks.exe"
 
 # pi 开始干活
 & $exe --emit --agent pi --status processing --key job-42 --title "数据清洗"

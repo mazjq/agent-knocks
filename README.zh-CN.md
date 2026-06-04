@@ -1,4 +1,4 @@
-# Agent 状态灯 · Agent Status Light
+# Agent 状态灯 · Agent Knocks
 
 [English](README.md) | **中文**
 
@@ -44,7 +44,7 @@
               (旁观:不输出/退出码0)                        ↓ 聚合 → 变色+声音+气泡
 ```
 
-- **emit（发射）**：每个 agent 的 hook 调用 `AgentStatusLight.exe --emit ...`，写一行状态文件就退出。
+- **emit（发射）**：每个 agent 的 hook 调用 `AgentKnocks.exe --emit ...`，写一行状态文件就退出。
   它**纯旁观**——不向 stdout 输出、退出码恒 0，所以**绝不阻断或改判 agent 的决策**。
 - **状态文件 = 事件总线**：每会话一个 JSON，生产者(emit)与消费者(托盘)彻底解耦。
 - **托盘**：用 `FileSystemWatcher`（操作系统的文件变更通知）~120ms 监听该目录，聚合所有会话状态，
@@ -60,16 +60,16 @@
 
 **① 上报状态**（agent 的 hook 或任何脚本调用）：
 ```
-AgentStatusLight.exe --emit --agent <名> --status <processing|waiting|done|end> [--key <会话id>] [--title <显示名>]
+AgentKnocks.exe --emit --agent <名> --status <processing|waiting|done|end> [--key <会话id>] [--title <显示名>]
 ```
 也可把事件 JSON 从 **stdin** 管道喂入，自动解析其中的 `session_id` / `cwd`。
 
-**② 状态文件**：`%LOCALAPPDATA%\AgentStatusLight\state\<agent>__<会话>.json`
+**② 状态文件**：`%LOCALAPPDATA%\AgentKnocks\state\<agent>__<会话>.json`
 ```json
 {"agent":"claude","session":"...","status":"waiting","title":"项目名","ts":1780000000}
 ```
 
-**③ 聚合状态**（供外部查询/对接）：`%LOCALAPPDATA%\AgentStatusLight\status.json`
+**③ 聚合状态**（供外部查询/对接）：`%LOCALAPPDATA%\AgentKnocks\status.json`
 ```json
 {"agg":"waiting","sessions":1,"ts":1780000000}
 ```
@@ -83,13 +83,13 @@ AgentStatusLight.exe --emit --agent <名> --status <processing|waiting|done|end>
 
 <details><summary>其它方式 / 参数</summary>
 
-- 命令行：`git clone https://github.com/mazjq/agent-status-light && cd agent-status-light && powershell -ExecutionPolicy Bypass -File install.ps1`
-- 便携包（免编译）：下载 Release 的 `AgentStatusLight-*.zip` 解压 → 双击 `install.cmd`；自己打包用 `package.ps1`（产物在 `dist\`）。
+- 命令行：`git clone https://github.com/mazjq/agent-knocks && cd agent-knocks && powershell -ExecutionPolicy Bypass -File install.ps1`
+- 便携包（免编译）：下载 Release 的 `AgentKnocks-*.zip` 解压 → 双击 `install.cmd`；自己打包用 `package.ps1`（产物在 `dist\`）。
 - 参数：`-NoStart` / `-NoAutoStart` / `-NoClaude` / `-NoCodex`。
 </details>
 
-**安装做了什么**：编译（便携包已带 exe 则跳过）→ 部署到 `%LOCALAPPDATA%\AgentStatusLight\` →
-合并 Claude hook 到 `~/.claude/settings.json`（先备份 `.agentstatuslight.bak`，保留你已有 hook）→
+**安装做了什么**：编译（便携包已带 exe 则跳过）→ 部署到 `%LOCALAPPDATA%\AgentKnocks\` →
+合并 Claude hook 到 `~/.claude/settings.json`（先备份 `.agentknocks.bak`，保留你已有 hook）→
 写 Codex 的 `~/.codex/hooks.json`（不碰你的 `notify`）→ 开机自启 → 启动托盘。
 **装完重启正在运行的 Claude / Codex 会话**（hook 在会话启动时加载）。
 
@@ -118,14 +118,14 @@ AgentStatusLight.exe --emit --agent <名> --status <processing|waiting|done|end>
 
 ```
 src/Core.cs              纯状态逻辑（无UI，可测）：状态机/聚合/跃迁/推断
-src/AgentStatusLight.cs  UI + emit 入口（tray + emit 双模式，C# 5，中英 i18n）
+src/AgentKnocks.cs  UI + emit 入口（tray + emit 双模式，C# 5，中英 i18n）
 tests/Tests.cs           Core 断言测试（38 项）
 build.ps1 / run-tests.ps1 / package.ps1
 install.cmd · uninstall.cmd   双击装/卸（绕过执行策略）
 install.ps1 · uninstall.ps1
 hooks/  codex-setup.md · generic-setup.md · codex-notify-chain.ps1(备选)
 ```
-运行时数据（不入库）：`%LOCALAPPDATA%\AgentStatusLight\` = `AgentStatusLight.exe` · `state\*.json` · `status.json` · `events.log` · `config.json`
+运行时数据（不入库）：`%LOCALAPPDATA%\AgentKnocks\` = `AgentKnocks.exe` · `state\*.json` · `status.json` · `events.log` · `config.json`
 
 ## 开发
 
@@ -135,7 +135,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1       # 编译
 powershell -ExecutionPolicy Bypass -File install.ps1     # 重部署+重启托盘
 ```
 核心逻辑在 `src/Core.cs`（无 UI 依赖）；改动先在 `tests/Tests.cs` 加用例、跑绿再改实现（TDD）。
-所有界面文案集中在 `src/AgentStatusLight.cs` 的 `I18n` 类。
+所有界面文案集中在 `src/AgentKnocks.cs` 的 `I18n` 类。
 
 ## 已知限制 / TODO
 

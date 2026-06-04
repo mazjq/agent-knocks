@@ -1,4 +1,4 @@
-// Agent Status Light - lightweight tray status indicator for AI coding agents (UI + emit entry).
+// Agent Knocks - lightweight tray status indicator for AI coding agents (UI + emit entry).
 // Pure state logic lives in Core.cs. Two modes:
 //   1. default:  resident tray, FileSystemWatcher on the state dir, aggregate + recolor + sound + balloon
 //   2. --emit:   invoked by an agent hook; reads stdin(JSON)+args, writes/removes a state file, exits
@@ -14,12 +14,12 @@ using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
-namespace AgentStatusLight
+namespace AgentKnocks
 {
     static class App
     {
-        public const string Name = "Agent Status Light";   // display name
-        public const string Id = "AgentStatusLight";        // install dir / registry / mutex key
+        public const string Name = "Agent Knocks";   // display name
+        public const string Id = "AgentKnocks";        // install dir / registry / mutex key
     }
 
     // ======================================================================
@@ -31,13 +31,13 @@ namespace AgentStatusLight
         static bool Zh { get { return Cur == "zh"; } }
         public static bool IsValid(string c) { return c == "en" || c == "zh"; }
 
-        public static string Status(AgentStatusLight.Status s)
+        public static string Status(AgentKnocks.Status s)
         {
             switch (s)
             {
-                case AgentStatusLight.Status.Waiting:    return Zh ? "等待确认" : "Waiting";
-                case AgentStatusLight.Status.Processing: return Zh ? "处理中"   : "Working";
-                case AgentStatusLight.Status.Done:       return Zh ? "已完成"   : "Done";
+                case AgentKnocks.Status.Waiting:    return Zh ? "等待确认" : "Waiting";
+                case AgentKnocks.Status.Processing: return Zh ? "处理中"   : "Working";
+                case AgentKnocks.Status.Done:       return Zh ? "已完成"   : "Done";
                 default:                                 return Zh ? "空闲"     : "Idle";
             }
         }

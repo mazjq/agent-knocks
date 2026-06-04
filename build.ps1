@@ -1,12 +1,12 @@
-# Build AgentStatusLight.exe with the in-box .NET Framework compiler (csc.exe).
-# No SDK install required. Output -> .\bin\AgentStatusLight.exe
+# Build AgentKnocks.exe with the in-box .NET Framework compiler (csc.exe).
+# No SDK install required. Output -> .\bin\AgentKnocks.exe
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$src  = Join-Path $root "src\AgentStatusLight.cs"
+$src  = Join-Path $root "src\AgentKnocks.cs"
 $core = Join-Path $root "src\Core.cs"
 $bin  = Join-Path $root "bin"
-$out  = Join-Path $bin  "AgentStatusLight.exe"
+$out  = Join-Path $bin  "AgentKnocks.exe"
 
 if (-not (Test-Path $bin)) { New-Item -ItemType Directory -Path $bin | Out-Null }
 

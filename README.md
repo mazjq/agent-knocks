@@ -1,4 +1,4 @@
-# Agent Status Light
+# Agent Knocks
 
 **English** | [中文](README.zh-CN.md)
 
@@ -48,7 +48,7 @@ No polling, no guessing — it **subscribes to the agent's lifecycle events (hoo
               (observer: no output / exit 0)                     ↓ aggregate → color + sound + balloon
 ```
 
-- **emit** — each agent hook calls `AgentStatusLight.exe --emit ...`, writes one state file, exits.
+- **emit** — each agent hook calls `AgentKnocks.exe --emit ...`, writes one state file, exits.
   It is a **pure observer**: writes nothing to stdout, always exits 0, so it **never blocks or
   alters the agent's decisions**.
 - **state file = event bus** — one JSON per session; producer (emit) and consumer (tray) fully decoupled.
@@ -63,16 +63,16 @@ For **any agent or script**, and the integration point for **external consumers*
 
 **① Report status** (from an agent hook or any script):
 ```
-AgentStatusLight.exe --emit --agent <name> --status <processing|waiting|done|end> [--key <session-id>] [--title <label>]
+AgentKnocks.exe --emit --agent <name> --status <processing|waiting|done|end> [--key <session-id>] [--title <label>]
 ```
 You can also pipe the event JSON via **stdin**; it auto-parses `session_id` / `cwd`.
 
-**② State file**: `%LOCALAPPDATA%\AgentStatusLight\state\<agent>__<session>.json`
+**② State file**: `%LOCALAPPDATA%\AgentKnocks\state\<agent>__<session>.json`
 ```json
 {"agent":"claude","session":"...","status":"waiting","title":"my-project","ts":1780000000}
 ```
 
-**③ Aggregate status** (for external queries): `%LOCALAPPDATA%\AgentStatusLight\status.json`
+**③ Aggregate status** (for external queries): `%LOCALAPPDATA%\AgentKnocks\status.json`
 ```json
 {"agg":"waiting","sessions":1,"ts":1780000000}
 ```
@@ -88,14 +88,14 @@ Uninstall by double-clicking `uninstall.cmd`.
 
 <details><summary>Other methods / flags</summary>
 
-- Command line: `git clone https://github.com/mazjq/agent-status-light && cd agent-status-light && powershell -ExecutionPolicy Bypass -File install.ps1`
-- Portable (no build): download the Release `AgentStatusLight-*.zip`, unzip → double-click `install.cmd`; build your own with `package.ps1` (output in `dist\`).
+- Command line: `git clone https://github.com/mazjq/agent-knocks && cd agent-knocks && powershell -ExecutionPolicy Bypass -File install.ps1`
+- Portable (no build): download the Release `AgentKnocks-*.zip`, unzip → double-click `install.cmd`; build your own with `package.ps1` (output in `dist\`).
 - Flags: `-NoStart` / `-NoAutoStart` / `-NoClaude` / `-NoCodex`.
 </details>
 
 **What install does**: build (skipped if the portable zip already ships the exe) → deploy to
-`%LOCALAPPDATA%\AgentStatusLight\` → merge Claude hooks into `~/.claude/settings.json` (backs up
-`.agentstatuslight.bak` first, keeps your existing hooks) → write Codex `~/.codex/hooks.json`
+`%LOCALAPPDATA%\AgentKnocks\` → merge Claude hooks into `~/.claude/settings.json` (backs up
+`.agentknocks.bak` first, keeps your existing hooks) → write Codex `~/.codex/hooks.json`
 (leaves your `notify` alone) → register autostart → start the tray.
 **Restart any running Claude / Codex session afterwards** (hooks load at session start).
 
@@ -125,14 +125,14 @@ Uninstall by double-clicking `uninstall.cmd`.
 
 ```
 src/Core.cs              pure state logic (no UI, testable): state machine / aggregate / transitions / inference
-src/AgentStatusLight.cs  UI + emit entry (tray + emit dual mode, C# 5, i18n EN/中文)
+src/AgentKnocks.cs  UI + emit entry (tray + emit dual mode, C# 5, i18n EN/中文)
 tests/Tests.cs           Core assertions (38)
 build.ps1 / run-tests.ps1 / package.ps1
 install.cmd · uninstall.cmd   double-click install/uninstall (bypasses execution policy)
 install.ps1 · uninstall.ps1
 hooks/  codex-setup.md · generic-setup.md · codex-notify-chain.ps1 (optional)
 ```
-Runtime data (not in the repo): `%LOCALAPPDATA%\AgentStatusLight\` = `AgentStatusLight.exe` · `state\*.json` · `status.json` · `events.log` · `config.json`
+Runtime data (not in the repo): `%LOCALAPPDATA%\AgentKnocks\` = `AgentKnocks.exe` · `state\*.json` · `status.json` · `events.log` · `config.json`
 
 ## Development
 
@@ -142,7 +142,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1       # compile
 powershell -ExecutionPolicy Bypass -File install.ps1     # redeploy + restart tray
 ```
 Core logic lives in `src/Core.cs` (no UI deps); add a case to `tests/Tests.cs` and go green before
-changing the implementation (TDD). All user-facing strings live in the `I18n` class in `src/AgentStatusLight.cs`.
+changing the implementation (TDD). All user-facing strings live in the `I18n` class in `src/AgentKnocks.cs`.
 
 ## Known limitations / TODO
 
