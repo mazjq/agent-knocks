@@ -3,15 +3,18 @@
 **English** | [中文](README.zh-CN.md)
 
 A tiny system-tray status light for **AI coding agents** (Claude Code / Codex / pi …).
-The tray dot changes color + plays an intuitive earcon + shows a balloon when an agent
-finishes or needs you. Native single EXE, zero runtime dependencies, ~**23 MB** resident.
-Windows only (a cross-platform Rust rewrite is on the roadmap).
+The tray dot changes color + plays an intuitive earcon when an agent finishes or needs you.
+Native **Rust** single EXE (~**0.4 MB**), no runtime dependencies. Windows today; the codebase
+is cross-platform and macOS/Linux builds are on the roadmap.
+
+> The original C# / .NET-Framework build is archived under [`legacy/csharp/`](legacy/csharp/) and as
+> the [`csharp-final`](https://github.com/mazjq/agent-knocks/releases/tag/csharp-final) release.
 
 | State | Meaning | Color | Sound |
 |---|---|---|---|
 | 🔵 Working | the agent is doing work | blue | none |
-| 🟠 Waiting | the agent is waiting for your input/approval | orange | rising 660→990 Hz (like "you there?") + balloon |
-| 🟢 Done | the agent finished | green | ascending 770→1046→1318 Hz ("all set") + balloon |
+| 🟠 Waiting | the agent is waiting for your input/approval | orange | rising 660→990 Hz (like "you there?") |
+| 🟢 Done | the agent finished | green | ascending 770→1046→1318 Hz ("all set") |
 | ⚪ Idle | no active session | grey | none |
 
 The tray shows the **highest-priority** state across all sessions (Waiting > Working > Done > Idle);
@@ -31,7 +34,10 @@ same project get a short tag `#XXXX`.
 | Waiting 🟠 | Done 🟢 |
 |:---:|:---:|
 | <img src="pic/waiting.png" width="320" alt="waiting balloon"> | <img src="pic/done.png" width="320" alt="done balloon"> |
-| orange + rising earcon + balloon | green + ascending triad + balloon |
+| orange + rising earcon | green + ascending triad |
+
+> Screenshots are from the C# edition (中文 UI). The Rust build signals via color + sound;
+> balloon toasts are pending (see TODO).
 
 | Working 🔵 | Session detail (right-click) |
 |:---:|:---:|
@@ -44,17 +50,17 @@ No polling, no guessing — it **subscribes to the agent's lifecycle events (hoo
 
 ```
  ① agent event (hook)         ② state file = event bus           ③ resident tray
- claude/codex ─emit─► writes state\<agent>__<session>.json ─► FileSystemWatcher
-              (observer: no output / exit 0)                     ↓ aggregate → color + sound + balloon
+ claude/codex ─emit─► writes state\<agent>__<session>.json ─► notify watcher
+              (observer: no output / exit 0)                     ↓ aggregate → color + sound
 ```
 
 - **emit** — each agent hook calls `AgentKnocks.exe --emit ...`, writes one state file, exits.
   It is a **pure observer**: writes nothing to stdout, always exits 0, so it **never blocks or
   alters the agent's decisions**.
 - **state file = event bus** — one JSON per session; producer (emit) and consumer (tray) fully decoupled.
-- **tray** — watches that folder with `FileSystemWatcher` (the OS file-change notification, ~120 ms),
-  aggregates all sessions, recolors + synthesizes sound via `Console.Beep` + shows a balloon.
-- **lightweight** — a native single EXE compiled by Windows' built-in `csc.exe` (~25 KB file / ~23 MB RAM);
+- **tray** — watches that folder with the `notify` crate (the OS file-change notification, ~120 ms),
+  aggregates all sessions, recolors + synthesizes earcons via Win32 `Beep`.
+- **lightweight** — a native Rust single EXE (~0.4 MB, GUI subsystem so no console window);
   apart from the tray there is **no extra resident process and no polling**.
 
 ## Integration protocol
@@ -89,7 +95,8 @@ Uninstall by double-clicking `uninstall.cmd`.
 <details><summary>Other methods / flags</summary>
 
 - Command line: `git clone https://github.com/mazjq/agent-knocks && cd agent-knocks && powershell -ExecutionPolicy Bypass -File install.ps1`
-- Portable (no build): download the Release `AgentKnocks-*.zip`, unzip → double-click `install.cmd`; build your own with `package.ps1` (output in `dist\`).
+- `install.cmd` builds with **cargo** (needs the [Rust toolchain](https://rustup.rs)). No toolchain? Use the
+  [`csharp-final`](https://github.com/mazjq/agent-knocks/releases/tag/csharp-final) portable zip (in-box compiler, no install). A prebuilt Rust release is TODO.
 - Flags: `-NoStart` / `-NoAutoStart` / `-NoClaude` / `-NoCodex`.
 </details>
 
@@ -124,31 +131,34 @@ Uninstall by double-clicking `uninstall.cmd`.
 ## File structure
 
 ```
-src/Core.cs              pure state logic (no UI, testable): state machine / aggregate / transitions / inference
-src/AgentKnocks.cs  UI + emit entry (tray + emit dual mode, C# 5, i18n EN/中文)
-tests/Tests.cs           Core assertions (38)
-build.ps1 / run-tests.ps1 / package.ps1
+Cargo.toml · Cargo.lock
+src/core.rs              pure state logic (no UI, testable): state machine / aggregate / transitions / inference
+src/app.rs               engine: notify watcher + aggregate loop + status.json
+src/main.rs              entry: --emit (observer) / tray / --once / autostart flags
+src/tray.rs              Windows tray-icon UI: dot + menu + sound + i18n + autostart
 install.cmd · uninstall.cmd   double-click install/uninstall (bypasses execution policy)
 install.ps1 · uninstall.ps1
 hooks/  codex-setup.md · generic-setup.md · codex-notify-chain.ps1 (optional)
+legacy/csharp/           the original C# build (archived; also the csharp-final release)
 ```
 Runtime data (not in the repo): `%LOCALAPPDATA%\AgentKnocks\` = `AgentKnocks.exe` · `state\*.json` · `status.json` · `events.log` · `config.json`
 
 ## Development
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File run-tests.ps1   # run 38 tests
-powershell -ExecutionPolicy Bypass -File build.ps1       # compile
-powershell -ExecutionPolicy Bypass -File install.ps1     # redeploy + restart tray
+cargo test               # core state-machine tests
+cargo build --release    # build target\release\agentknocks.exe (GUI subsystem, no console)
+powershell -ExecutionPolicy Bypass -File install.ps1   # build + redeploy + restart tray
 ```
-Core logic lives in `src/Core.cs` (no UI deps); add a case to `tests/Tests.cs` and go green before
-changing the implementation (TDD). All user-facing strings live in the `I18n` class in `src/AgentKnocks.cs`.
+Core logic lives in `src/core.rs` (no UI deps); add a case to its `#[cfg(test)] mod tests` and go green
+before changing the implementation (TDD). All user-facing strings live in the `I18n`/`t_*` helpers in `src/tray.rs`.
 
 ## Known limitations / TODO
 
 - **Codex desktop app** doesn't dispatch local hooks yet (upstream bug [openai/codex#16430](https://github.com/openai/codex/issues/16430))
   → `hooks.json` is in place and activates automatically once fixed; use the **Codex CLI** for immediate use.
 - pi hook mechanism unconfirmed (generic protocol provided as fallback).
-- Sounds are synthesized with `Console.Beep`; for custom WAVs add a `SoundPlayer` branch in `SoundEngine`.
-- **Cross-platform Rust rewrite** planned (Windows-only today; also cuts RAM 23 MB → 3–5 MB) — see issues.
-- **click-to-focus** (jump to the agent's window from the balloon) planned — see issues.
+- **macOS / Linux**: the core + engine are cross-platform; the tray (`tray.rs`) and autostart are Windows-only
+  so far — native event loop + `auto-launch` for the other platforms is on the roadmap ([#1](https://github.com/mazjq/agent-knocks/issues/1)).
+- **Balloon toasts** (the C# build had them) are pending in the Rust tray.
+- **click-to-focus** (jump to the agent's window) planned ([#2](https://github.com/mazjq/agent-knocks/issues/2)).

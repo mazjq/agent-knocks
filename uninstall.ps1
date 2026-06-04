@@ -1,7 +1,7 @@
-# AgentKnocks uninstaller
-#   - stops the running instance
-#   - removes Claude Code hooks we added (keeps your other hooks)
-#   - removes autostart entry
+# Agent Knocks (Rust build) uninstaller
+#   - stops the tray
+#   - removes only the hooks it added (keeps your other hooks)
+#   - removes the Start Menu shortcut + autostart entry
 #   - deletes the install dir (and optionally the state/config)
 param([switch]$KeepState)
 $ErrorActionPreference = "Stop"
@@ -35,39 +35,8 @@ if (Test-Path $claudeSettings) {
     }
 }
 
-# 2b. remove Codex hooks: ~/.codex/hooks.json (ours) + config.toml residue
-$codexDir = Join-Path $env:USERPROFILE ".codex"
-$codexCfg = Join-Path $codexDir "config.toml"
-if (Test-Path $codexCfg) {
-    $raw = Read-Utf8 $codexCfg
-    $orig = $raw
-    # (a) old managed [[hooks]] block from earlier versions
-    $bm = "# >>> AgentKnocks codex hooks (managed) >>>"
-    $em = "# <<< AgentKnocks codex hooks (managed) <<<"
-    if ($raw -like "*$bm*") {
-        $pat = [regex]::Escape($bm) + "[\s\S]*?" + [regex]::Escape($em)
-        $raw = [regex]::Replace($raw, $pat, "")
-    }
-    # (b) Codex's own [hooks.state.'...hooks.json...'] trust bookkeeping -> dangling after we delete hooks.json
-    $statePat = "(?m)^\[hooks\.state\.'[^']*hooks\.json[^']*'\]\s*\r?\n(?:trusted_hash\s*=\s*""[^""]*""\s*\r?\n?)?"
-    $raw = [regex]::Replace($raw, $statePat, "")
-    if ($raw -notmatch "(?m)^\[hooks\.state\.") {
-        $raw = [regex]::Replace($raw, "(?m)^\[hooks\.state\]\s*\r?\n", "")
-    }
-    # write only if changed AND we didn't accidentally drop the notify line (safety guard)
-    if ($raw -ne $orig) {
-        $notifyOk = ($orig -notmatch "(?m)^\s*notify\s*=") -or ($raw -match "(?m)^\s*notify\s*=")
-        if ($notifyOk) {
-            Copy-Item $codexCfg "$codexCfg.agentknocks.bak" -Force
-            Write-Utf8 $codexCfg ($raw.TrimEnd() + "`r`n")
-            Write-Host "Cleaned AgentKnocks residue from config.toml (notify untouched)" -ForegroundColor Green
-        } else {
-            Write-Host "Skipped config.toml edit (safety guard: notify line would be affected)." -ForegroundColor Yellow
-        }
-    }
-}
-# hooks.json: if it only contains AgentKnocks hooks, delete it; else leave for manual edit
-$hooksJson = Join-Path $codexDir "hooks.json"
+# 2b. remove Codex hooks.json if it only contains AgentKnocks
+$hooksJson = Join-Path $env:USERPROFILE ".codex\hooks.json"
 if (Test-Path $hooksJson) {
     $hj = Read-Utf8 $hooksJson
     if ($hj -like "*AgentKnocks*") {
@@ -87,19 +56,23 @@ if (Test-Path $hooksJson) {
             Remove-Item $hooksJson -Force
             Write-Host "Removed ~/.codex/hooks.json (AgentKnocks-only)" -ForegroundColor Green
         } else {
-            Write-Host "hooks.json has non-AgentKnocks entries; backed up to .agentknocks.bak - edit it manually to remove AgentKnocks lines." -ForegroundColor Yellow
+            Write-Host "hooks.json has non-AgentKnocks entries; backed up - edit it manually." -ForegroundColor Yellow
         }
     }
 }
 
-# 3. autostart
+# 3. Start Menu shortcut
+$lnk = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Agent Knocks.lnk"
+if (Test-Path $lnk) { Remove-Item $lnk -Force; Write-Host "Removed Start Menu shortcut" -ForegroundColor Green }
+
+# 4. autostart
 $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 if (Get-ItemProperty -Path $runKey -Name "AgentKnocks" -ErrorAction SilentlyContinue) {
     Remove-ItemProperty -Path $runKey -Name "AgentKnocks"
     Write-Host "Removed autostart entry" -ForegroundColor Green
 }
 
-# 4. install dir
+# 5. install dir
 $installDir = Join-Path $env:LOCALAPPDATA "AgentKnocks"
 if (Test-Path $installDir) {
     if ($KeepState) {

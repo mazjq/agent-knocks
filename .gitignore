@@ -1,11 +1,10 @@
-# Build artifacts (built locally via build.ps1)
-bin/
-
-# Packaged distributables (built locally via package.ps1)
-dist/
-
-# Rust build output (rust/ port); Cargo.lock IS committed (binary app)
+# Rust build output (Cargo.lock IS committed - binary app)
+/target/
 rust/target/
+
+# C# build artifacts / packages (legacy/csharp build.ps1 / package.ps1)
+bin/
+dist/
 
 # Editor / OS junk
 .vs/

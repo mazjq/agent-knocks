@@ -2,14 +2,16 @@
 
 [English](README.md) | **中文**
 
-后台监控 **claude / codex / pi 等 agent** 的工作状态，托盘变色 + 直觉化声音 + 气泡提示。
-原生单 EXE，零运行时依赖，常驻内存约 **23MB**。仅 Windows（跨平台 Rust 重写在路线图上）。
+后台监控 **claude / codex / pi 等 agent** 的工作状态，托盘变色 + 直觉化声音。
+原生 **Rust** 单 EXE（约 **0.4MB**），零运行时依赖。当前 Windows；核心与引擎跨平台，macOS/Linux 在路线图上。
+
+> 原 C# / .NET-Framework 版已归档在 [`legacy/csharp/`](legacy/csharp/) 与 [`csharp-final`](https://github.com/mazjq/agent-knocks/releases/tag/csharp-final) release。
 
 | 状态 | 含义 | 颜色 | 声音 |
 |---|---|---|---|
 | 🔵 处理中 | agent 正在干活 | 蓝 | 无 |
-| 🟠 等待确认 | agent 在等你输入/批准 | 橙 | 上升音 660→990Hz（像在问"在吗？"）+ 气泡 |
-| 🟢 已完成 | agent 处理完成 | 绿 | 上行三连 770→1046→1318Hz（"搞定~"）+ 气泡 |
+| 🟠 等待确认 | agent 在等你输入/批准 | 橙 | 上升音 660→990Hz（像在问"在吗？"） |
+| 🟢 已完成 | agent 处理完成 | 绿 | 上行三连 770→1046→1318Hz（"搞定~"） |
 | ⚪ 空闲 | 无活动会话 | 灰 | 无 |
 
 托盘显示所有会话里**优先级最高**的状态（等待 > 处理 > 完成 > 空闲）；右键菜单看每个会话明细。
@@ -27,7 +29,9 @@
 | 等待确认 🟠 | 处理完成 🟢 |
 |:---:|:---:|
 | <img src="pic/waiting.png" width="320" alt="等待确认气泡"> | <img src="pic/done.png" width="320" alt="处理完成气泡"> |
-| 橙灯 + 上升音 + 气泡 | 绿灯 + 上行三连音 + 气泡 |
+| 橙灯 + 上升音 | 绿灯 + 上行三连音 |
+
+> 截图取自 C# 版（中文界面）。Rust 版用颜色 + 声音提示；气泡 toast 待补（见 TODO）。
 
 | 处理中 🔵 | 会话明细（右键菜单） |
 |:---:|:---:|
@@ -40,16 +44,16 @@
 
 ```
  ① agent 事件(hook)          ② 状态文件 = 事件总线          ③ 常驻托盘
- claude/codex ─emit─► 写 state\<agent>__<会话>.json ─► FileSystemWatcher 监听
-              (旁观:不输出/退出码0)                        ↓ 聚合 → 变色+声音+气泡
+ claude/codex ─emit─► 写 state\<agent>__<会话>.json ─► notify 监听
+              (旁观:不输出/退出码0)                        ↓ 聚合 → 变色+声音
 ```
 
 - **emit（发射）**：每个 agent 的 hook 调用 `AgentKnocks.exe --emit ...`，写一行状态文件就退出。
   它**纯旁观**——不向 stdout 输出、退出码恒 0，所以**绝不阻断或改判 agent 的决策**。
 - **状态文件 = 事件总线**：每会话一个 JSON，生产者(emit)与消费者(托盘)彻底解耦。
-- **托盘**：用 `FileSystemWatcher`（操作系统的文件变更通知）~120ms 监听该目录，聚合所有会话状态，
-  变色 + `Console.Beep` 合成声音 + 气泡。
-- **轻量**：Windows 系统内置 `csc.exe` 编译的原生单 EXE（文件 ~25KB / 内存 ~23MB），
+- **托盘**：用 `notify` crate（操作系统的文件变更通知）~120ms 监听该目录，聚合所有会话状态，
+  变色 + Win32 `Beep` 合成声音。
+- **轻量**：原生 Rust 单 EXE（约 0.4MB，GUI 子系统、无控制台窗口），
   除托盘外**无任何额外常驻进程或轮询**。
 
 > 概念解释（不熟可查知识库 `My_Lib/wiki`）：[发布订阅/emit]、[状态文件事件总线]、[文件变更通知/FileSystemWatcher]、[非阻塞hook契约]、[直觉化通知]。
@@ -84,7 +88,8 @@ AgentKnocks.exe --emit --agent <名> --status <processing|waiting|done|end> [--k
 <details><summary>其它方式 / 参数</summary>
 
 - 命令行：`git clone https://github.com/mazjq/agent-knocks && cd agent-knocks && powershell -ExecutionPolicy Bypass -File install.ps1`
-- 便携包（免编译）：下载 Release 的 `AgentKnocks-*.zip` 解压 → 双击 `install.cmd`；自己打包用 `package.ps1`（产物在 `dist\`）。
+- `install.cmd` 用 **cargo** 编译（需 [Rust 工具链](https://rustup.rs)）。没装工具链？用
+  [`csharp-final`](https://github.com/mazjq/agent-knocks/releases/tag/csharp-final) 便携包（系统内置编译器，免安装）。Rust 预编译包待补。
 - 参数：`-NoStart` / `-NoAutoStart` / `-NoClaude` / `-NoCodex`。
 </details>
 
@@ -117,31 +122,34 @@ AgentKnocks.exe --emit --agent <名> --status <processing|waiting|done|end> [--k
 ## 文件结构
 
 ```
-src/Core.cs              纯状态逻辑（无UI，可测）：状态机/聚合/跃迁/推断
-src/AgentKnocks.cs  UI + emit 入口（tray + emit 双模式，C# 5，中英 i18n）
-tests/Tests.cs           Core 断言测试（38 项）
-build.ps1 / run-tests.ps1 / package.ps1
+Cargo.toml · Cargo.lock
+src/core.rs              纯状态逻辑（无UI，可测）：状态机/聚合/跃迁/推断
+src/app.rs               引擎：notify 监听 + 聚合循环 + status.json
+src/main.rs              入口：--emit（旁观）/ 托盘 / --once / 自启开关
+src/tray.rs              Windows 托盘 UI：彩点 + 菜单 + 声音 + i18n + 自启
 install.cmd · uninstall.cmd   双击装/卸（绕过执行策略）
 install.ps1 · uninstall.ps1
 hooks/  codex-setup.md · generic-setup.md · codex-notify-chain.ps1(备选)
+legacy/csharp/           原 C# 版（归档；即 csharp-final release）
 ```
 运行时数据（不入库）：`%LOCALAPPDATA%\AgentKnocks\` = `AgentKnocks.exe` · `state\*.json` · `status.json` · `events.log` · `config.json`
 
 ## 开发
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File run-tests.ps1   # 跑 38 项测试
-powershell -ExecutionPolicy Bypass -File build.ps1       # 编译
-powershell -ExecutionPolicy Bypass -File install.ps1     # 重部署+重启托盘
+cargo test               # 核心状态机测试
+cargo build --release    # 编译 target\release\agentknocks.exe（GUI 子系统，无控制台）
+powershell -ExecutionPolicy Bypass -File install.ps1   # 编译 + 重部署 + 重启托盘
 ```
-核心逻辑在 `src/Core.cs`（无 UI 依赖）；改动先在 `tests/Tests.cs` 加用例、跑绿再改实现（TDD）。
-所有界面文案集中在 `src/AgentKnocks.cs` 的 `I18n` 类。
+核心逻辑在 `src/core.rs`（无 UI 依赖）；改动先在其 `#[cfg(test)] mod tests` 加用例、跑绿再改实现（TDD）。
+所有界面文案集中在 `src/tray.rs` 的 `I18n`/`t_*` 辅助函数。
 
 ## 已知限制 / TODO
 
 - **Codex 桌面 app** 暂不派发本地 hook（上游 bug [openai/codex#16430](https://github.com/openai/codex/issues/16430)）→
   `hooks.json` 已就位、修复后自动生效；想立即可用就用 **Codex CLI**。
 - pi 的 hook 机制待确认（已留通用协议兜底）。
-- 提示音用 `Console.Beep` 合成；如需自定义 WAV，可在 `SoundEngine` 加 `SoundPlayer` 分支。
-- **跨平台 Rust 重写**（当前仅 Windows；顺带把内存 23MB → 3-5MB）——见 issues。
-- **click-to-focus**（从气泡跳到 agent 窗口）——见 issues。
+- **macOS / Linux**：核心与引擎已跨平台，托盘（`tray.rs`）和自启暂为 Windows——
+  其它平台的原生事件循环 + `auto-launch` 在路线图上（[#1](https://github.com/mazjq/agent-knocks/issues/1)）。
+- **气泡 toast**（C# 版有）在 Rust 托盘待补。
+- **click-to-focus**（跳到 agent 窗口）——见 [#2](https://github.com/mazjq/agent-knocks/issues/2)。
