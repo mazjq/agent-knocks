@@ -243,9 +243,10 @@ namespace AgentPing
             string low = (msg == null ? "" : msg).ToLowerInvariant();
             if (low.Length > 0)
             {
-                // 空闲类: "Claude is waiting for your input" / "waiting for your input"
+                // 空闲类: "Claude is waiting for your input" / "idle"
+                // Stop hook 已报过完成, 这条是 ~60s 后的闲置提醒 -> 忽略, 否则重复弹"处理完成"
                 if (low.Contains("waiting for your input") || low.Contains("idle"))
-                    return "done";
+                    return "ignore";
                 // 权限/确认类
                 if (low.Contains("permission") || low.Contains("approve") ||
                     low.Contains("confirm") || low.Contains("needs your"))

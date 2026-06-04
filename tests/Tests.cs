@@ -115,8 +115,9 @@ static class Tests
         Eq(p.Aggregate(), Status.Done, "fresh done -> green");
 
         // ---- Infer.Notification: 空闲 vs 权限 ----
-        Eq(Infer.Notification("{\"message\":\"Claude is waiting for your input\"}"), "done",
-           "idle notification -> done (no false alarm)");
+        // 空闲提醒(Stop 已报完成)应被忽略, 否则 ~60s 后重复弹"处理完成"
+        Eq(Infer.Notification("{\"message\":\"Claude is waiting for your input\"}"), "ignore",
+           "idle notification -> ignore (Stop already reported done; no duplicate)");
         Eq(Infer.Notification("{\"message\":\"Claude needs your permission to use Bash\"}"), "waiting",
            "permission notification -> waiting");
         Eq(Infer.Notification("{\"message\":\"\"}"), "waiting", "empty notification -> waiting (default)");

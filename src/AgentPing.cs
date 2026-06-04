@@ -94,6 +94,9 @@ namespace AgentPing
 
                 Log(agent, status, key, stdin);
 
+                // 空操作: 闲置提醒等无需改变状态的事件, 记日志后直接退出(不碰状态文件)
+                if (status == "ignore") return 0;
+
                 if (status == "end" || status == "exit")
                 {
                     try { if (File.Exists(file)) File.Delete(file); } catch { }
