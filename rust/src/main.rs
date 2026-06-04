@@ -5,6 +5,8 @@
 //            still ships the tray until this reaches parity).
 mod app;
 mod core;
+#[cfg(windows)]
+mod tray;
 use app::{data_root, now_unix};
 use core::*;
 
@@ -20,10 +22,20 @@ fn main() {
         app::run_once(data_root());
         return;
     }
-    // Headless watch loop for now; the tray-icon visual layers on top next slice.
-    // --watch-secs N exits after N seconds (testing).
-    let max = arg_val(&args, "--watch-secs").and_then(|s| s.parse::<u64>().ok());
-    app::run_headless(data_root(), max);
+    // --watch-secs N: headless watch loop, exits after N seconds (testing / non-Windows).
+    if let Some(max) = arg_val(&args, "--watch-secs").and_then(|s| s.parse::<u64>().ok()) {
+        app::run_headless(data_root(), Some(max));
+        return;
+    }
+    // Default: the tray. (mac/Linux event loop is a later slice -> headless for now.)
+    #[cfg(windows)]
+    {
+        tray::run();
+    }
+    #[cfg(not(windows))]
+    {
+        app::run_headless(data_root(), None);
+    }
 }
 
 // ---- emit mode ----

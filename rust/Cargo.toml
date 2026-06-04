@@ -19,3 +19,5 @@ panic = "abort"
 
 [dependencies]
 notify = "6"
+tray-icon = "0.24"
+windows-sys = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
