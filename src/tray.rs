@@ -116,6 +116,12 @@ fn t_jump_hint(l: Lang) -> &'static str {
         Lang::Zh => "↗ 跳转",
     }
 }
+fn t_clear_done(l: Lang) -> &'static str {
+    match l {
+        Lang::En => "🧹 Clear completed",
+        Lang::Zh => "🧹 清除已完成",
+    }
+}
 
 // ---- icon / colors ----
 
@@ -215,6 +221,7 @@ struct Ids {
     lang_en: MenuId,
     lang_zh: MenuId,
     start_login: MenuId,
+    clear_done: MenuId,
     sessions: Vec<(MenuId, Session)>, // per-session menu line -> session, for click-to-focus
 }
 
@@ -274,6 +281,8 @@ fn build_menu(app: &App, agg: Status, l: Lang, muted: bool) -> (Menu, Ids) {
     let _ = language.append(&lang_zh);
 
     let start_login = CheckMenuItem::new(t_autostart(l), true, autostart_enabled(), None);
+    let (_, _, done_n) = app.counts();
+    let clear_done = MenuItem::new(t_clear_done(l), done_n > 0, None);
     let quit = MenuItem::new(t_quit(l), true, None);
 
     let ids = Ids {
@@ -285,12 +294,14 @@ fn build_menu(app: &App, agg: Status, l: Lang, muted: bool) -> (Menu, Ids) {
         lang_en: lang_en.id().clone(),
         lang_zh: lang_zh.id().clone(),
         start_login: start_login.id().clone(),
+        clear_done: clear_done.id().clone(),
         sessions: session_items,
     };
 
     let _ = menu.append(&mute);
     let _ = menu.append(&test);
     let _ = menu.append(&open);
+    let _ = menu.append(&clear_done);
     let _ = menu.append(&language);
     let _ = menu.append(&start_login);
     let _ = menu.append(&PredefinedMenuItem::separator());
@@ -587,6 +598,11 @@ pub fn run() {
                 ids = refresh(&tray, &app, agg, lang, muted);
             } else if ev.id == ids.start_login {
                 set_autostart(!autostart_enabled());
+                ids = refresh(&tray, &app, agg, lang, muted);
+            } else if ev.id == ids.clear_done {
+                app.clear_done();
+                agg = app.aggregate();
+                let _ = tray.set_icon(Some(dot_icon(color(agg))));
                 ids = refresh(&tray, &app, agg, lang, muted);
             } else if let Some(item) = ids.sessions.iter().find(|(id, _)| *id == ev.id) {
                 focus_session(&item.1);

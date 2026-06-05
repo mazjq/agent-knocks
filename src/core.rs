@@ -204,7 +204,10 @@ pub struct StateStore {
 impl StateStore {
     pub fn new() -> StateStore {
         StateStore {
-            done_ttl: 60,
+            // `done` persists until SessionEnd removes the session (you close the
+            // terminal); this TTL is only a safety net for abrupt closes where the
+            // SessionEnd hook never fires.
+            done_ttl: 30 * 60,
             processing_ttl: 45 * 60,
             waiting_ttl: 3 * 60 * 60,
             sessions: HashMap::new(),

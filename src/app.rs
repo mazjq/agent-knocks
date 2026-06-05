@@ -108,6 +108,24 @@ impl App {
     pub fn count(&self) -> usize {
         self.store.count()
     }
+    pub fn aggregate(&self) -> Status {
+        self.store.aggregate()
+    }
+
+    // Remove all `done` sessions (delete their state files); for the "Clear completed" menu.
+    pub fn clear_done(&mut self) {
+        let keys: Vec<String> = self
+            .store
+            .sessions()
+            .into_iter()
+            .filter(|s| s.state == Status::Done)
+            .map(|s| s.key)
+            .collect();
+        for key in keys {
+            let _ = std::fs::remove_file(self.state_dir.join(format!("{}.json", key)));
+        }
+        self.reload();
+    }
 }
 
 pub fn agg_str(s: Status) -> &'static str {
