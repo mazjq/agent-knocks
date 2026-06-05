@@ -70,14 +70,18 @@ if (-not $NoClaude) {
         Copy-Item $claudeSettings "$claudeSettings.agentknocks.bak" -Force
         Write-Host "Backed up Claude settings -> $claudeSettings.agentknocks.bak" -ForegroundColor DarkGray
         $json = Read-Utf8 $claudeSettings | ConvertFrom-Json
-        $q = '"' + $exe + '"'
-        Add-ClaudeHook $json "UserPromptSubmit"  "$q --emit --agent claude --status processing"
-        Add-ClaudeHook $json "PreToolUse"        "$q --emit --agent claude --status processing"
-        Add-ClaudeHook $json "PermissionRequest" "$q --emit --agent claude --status waiting"
-        Add-ClaudeHook $json "PostToolUse"       "$q --emit --agent claude --status processing"
-        Add-ClaudeHook $json "Notification"      "$q --emit --agent claude --status notify"
-        Add-ClaudeHook $json "Stop"              "$q --emit --agent claude --status done"
-        Add-ClaudeHook $json "SessionEnd"        "$q --emit --agent claude --status end"
+        # Universal command form: unquoted, forward slashes, no '&'. Runs in BOTH the
+        # shells Claude uses for hooks on Windows (bash / Git Bash AND PowerShell) -
+        # a quoted path needs '& "..."' in PowerShell but '& ' is a syntax error in bash,
+        # and an unquoted forward-slash path (no spaces) executes directly in both.
+        $exeFwd = $exe -replace '\\', '/'
+        Add-ClaudeHook $json "UserPromptSubmit"  "$exeFwd --emit --agent claude --status processing"
+        Add-ClaudeHook $json "PreToolUse"        "$exeFwd --emit --agent claude --status processing"
+        Add-ClaudeHook $json "PermissionRequest" "$exeFwd --emit --agent claude --status waiting"
+        Add-ClaudeHook $json "PostToolUse"       "$exeFwd --emit --agent claude --status processing"
+        Add-ClaudeHook $json "Notification"      "$exeFwd --emit --agent claude --status notify"
+        Add-ClaudeHook $json "Stop"              "$exeFwd --emit --agent claude --status done"
+        Add-ClaudeHook $json "SessionEnd"        "$exeFwd --emit --agent claude --status end"
         Write-Utf8 $claudeSettings ($json | ConvertTo-Json -Depth 50)
         Write-Host "Claude Code hooks installed" -ForegroundColor Green
     } else {
@@ -94,8 +98,9 @@ if (-not $NoCodex) {
             Copy-Item $hooksJson "$hooksJson.agentknocks.bak" -Force
             Write-Host "NOTE: existing hooks.json backed up to .agentknocks.bak and replaced." -ForegroundColor Yellow
         }
-        $exeJ = $exe -replace '\\', '\\'
-        function JCmd([string]$st) { return '"\"' + $exeJ + '\" --emit --agent codex --status ' + $st + '"' }
+        # same universal form (unquoted, forward slashes) for Codex's command + commandWindows
+        $exeFwd = $exe -replace '\\', '/'
+        function JCmd([string]$st) { return '"' + $exeFwd + ' --emit --agent codex --status ' + $st + '"' }
         $evs = @(
             @('UserPromptSubmit','processing'),
             @('PreToolUse','processing'),
