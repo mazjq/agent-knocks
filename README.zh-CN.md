@@ -1,155 +1,85 @@
-# Agent 状态灯 · Agent Knocks
+# Agent Knocks · agent 状态灯
 
 [English](README.md) | **中文**
 
-后台监控 **claude / codex / pi 等 agent** 的工作状态，托盘变色 + 直觉化声音。
-原生 **Rust** 单 EXE（约 **0.4MB**），零运行时依赖。当前 Windows；核心与引擎跨平台，macOS/Linux 在路线图上。
-
-> 原 C# / .NET-Framework 版已归档在 [`legacy/csharp/`](legacy/csharp/) 与 [`csharp-final`](https://github.com/mazjq/agent-knocks/releases/tag/csharp-final) release。
-
-| 状态 | 含义 | 颜色 | 声音 |
-|---|---|---|---|
-| 🔵 处理中 | agent 正在干活 | 蓝 | 无 |
-| 🟠 等待确认 | agent 在等你输入/批准 | 橙 | 上升音 660→990Hz（像在问"在吗？"） |
-| 🟢 已完成 | agent 处理完成 | 绿 | 上行三连 770→1046→1318Hz（"搞定~"） |
-| ⚪ 空闲 | 无活动会话 | 灰 | 无 |
-
-托盘显示所有会话里**优先级最高**的状态（等待 > 处理 > 完成 > 空闲）；右键菜单看每个会话明细。
-多窗口按 `session_id` 区分，同项目多开带短标签 `#XXXX`。
-
-> **语言**：托盘界面**默认英文**，可随时在托盘菜单 → 🌐 Language 切换到**中文**。
-
-## 效果
+一个极简的 Windows 托盘状态灯，用于盯着 **AI 编码 agent**（Claude Code / Codex / pi）。
+agent 需要你或干完活时，它会"敲门"——变色 + 声音 + 气泡，**点一下就跳到那个 agent 的窗口**。
+原生 **Rust** 单 EXE（约 0.45 MB，常驻 ~10 MB），零运行时依赖。
 
 <p align="center">
-  <img src="pic/colors.png" width="280" alt="三态彩灯：完成绿 / 处理蓝 / 等待橙"><br>
-  <sub>三态托盘彩灯：🟢 已完成 ｜ 🔵 处理中 ｜ 🟠 等待确认</sub>
+  <img src="pic/colors.png" width="260" alt="三态彩点"><br>
+  <sub>🟢 已完成 ｜ 🔵 处理中 ｜ 🟠 等待确认</sub>
 </p>
 
-| 等待确认 🟠 | 处理完成 🟢 |
-|:---:|:---:|
-| <img src="pic/waiting.png" width="320" alt="等待确认气泡"> | <img src="pic/done.png" width="320" alt="处理完成气泡"> |
-| 橙灯 + 上升音 | 绿灯 + 上行三连音 |
+> 原 C# / .NET 版已归档在 [`legacy/csharp/`](legacy/csharp/) 与 [`csharp-final`](https://github.com/mazjq/agent-knocks/releases/tag/csharp-final) release。
 
-> 截图取自 C# 版（中文界面）。Rust 版用颜色 + 声音提示；气泡 toast 待补（见 TODO）。
+## 功能
 
-| 处理中 🔵 | 会话明细（右键菜单） |
-|:---:|:---:|
-| <img src="pic/processing.png" width="320" alt="处理中托盘"> | <img src="pic/details.png" width="320" alt="右键菜单看每个会话明细"> |
-| 蓝灯常驻，干活中无声 | 每个会话的状态 / 耗时 / 项目标签 |
+| 状态 | 颜色 | 声音 |
+|---|---|---|
+| 🔵 处理中 — agent 正在干活 | 蓝 | 无 |
+| 🟠 等待确认 — 在等你输入/批准 | 橙 | 上升音 660→990Hz + 气泡 |
+| 🟢 已完成 — 这轮干完了 | 绿 | 上行三连 770→1046→1318Hz + 气泡 |
+| ⚪ 空闲 — 无活动会话 | 灰 | 无 |
 
-## 原理 / 架构
-
-不轮询、不猜——直接**订阅 agent 的生命周期事件（hook）**。三段式：
-
-```
- ① agent 事件(hook)          ② 状态文件 = 事件总线          ③ 常驻托盘
- claude/codex ─emit─► 写 state\<agent>__<会话>.json ─► notify 监听
-              (旁观:不输出/退出码0)                        ↓ 聚合 → 变色+声音
-```
-
-- **emit（发射）**：每个 agent 的 hook 调用 `AgentKnocks.exe --emit ...`，写一行状态文件就退出。
-  它**纯旁观**——不向 stdout 输出、退出码恒 0，所以**绝不阻断或改判 agent 的决策**。
-- **状态文件 = 事件总线**：每会话一个 JSON，生产者(emit)与消费者(托盘)彻底解耦。
-- **托盘**：用 `notify` crate（操作系统的文件变更通知）~120ms 监听该目录，聚合所有会话状态，
-  变色 + Win32 `Beep` 合成声音。
-- **轻量**：原生 Rust 单 EXE（约 0.4MB，GUI 子系统、无控制台窗口），
-  除托盘外**无任何额外常驻进程或轮询**。
-
-> 概念解释（不熟可查知识库 `My_Lib/wiki`）：[发布订阅/emit]、[状态文件事件总线]、[文件变更通知/FileSystemWatcher]、[非阻塞hook契约]、[直觉化通知]。
-
-## 接入协议
-
-给**任意 agent 或脚本**用，也是**外部消费者（如多 agent 看板）**的对接点。
-
-**① 上报状态**（agent 的 hook 或任何脚本调用）：
-```
-AgentKnocks.exe --emit --agent <名> --status <processing|waiting|done|end> [--key <会话id>] [--title <显示名>]
-```
-也可把事件 JSON 从 **stdin** 管道喂入，自动解析其中的 `session_id` / `cwd`。
-
-**② 状态文件**：`%LOCALAPPDATA%\AgentKnocks\state\<agent>__<会话>.json`
-```json
-{"agent":"claude","session":"...","status":"waiting","title":"项目名","ts":1780000000}
-```
-
-**③ 聚合状态**（供外部查询/对接）：`%LOCALAPPDATA%\AgentKnocks\status.json`
-```json
-{"agg":"waiting","sessions":1,"ts":1780000000}
-```
-> 别的工具想复用本工具的状态，**读 `state\*.json` 或 `status.json` 即可**——无需理解内部实现。
-
-**诊断**：`events.log` 记录每条上报（毫秒时间戳/状态/消息，超 200KB 自动重置），排查颜色/时机用。
+- **一瞥即知的三态彩点**，聚合所有会话（等待 > 处理 > 完成 > 空闲）；右键看每个会话明细。
+- **直觉化声音 + Windows 气泡**（等待/完成时，可静音）。
+- **点击跳转** — 左键点彩点（或菜单里的会话行）把那个 agent 的窗口拉到最前；按**项目/cwd 文件夹名**匹配，**多个 VSCode 窗口也能区分**。
+- **多会话** — 每个窗口按 `session_id` 区分，带短标签 `#tag`。
+- **中英双语** — 托盘菜单切换（默认英文）。
+- **完成态保留** 到你关闭终端（`SessionEnd`），并有 30 分钟兜底 + "清除已完成"。
+- **非阻塞 & 安全** — hook 只写一个状态文件就退出（不输出、退出码 0），绝不干扰 agent；装/卸只动自己加的 hook。
 
 ## 安装
 
-**最简单**：下载本仓库（**Code → Download ZIP** 或 `git clone`）解压 → **双击 `install.cmd`**。卸载双击 `uninstall.cmd`。
+**最简单（免工具链）**：下载 [最新 release](https://github.com/mazjq/agent-knocks/releases/latest) 的 zip → 解压 → 双击 **`install.cmd`**。卸载：`uninstall.cmd`。
 
-<details><summary>其它方式 / 参数</summary>
-
-- 命令行：`git clone https://github.com/mazjq/agent-knocks && cd agent-knocks && powershell -ExecutionPolicy Bypass -File install.ps1`
-- `install.cmd` 用 **cargo** 编译（需 [Rust 工具链](https://rustup.rs)）。没装工具链？用
-  [`csharp-final`](https://github.com/mazjq/agent-knocks/releases/tag/csharp-final) 便携包（系统内置编译器，免安装）。Rust 预编译包待补。
-- 参数：`-NoStart` / `-NoAutoStart` / `-NoClaude` / `-NoCodex`。
-</details>
-
-**安装做了什么**：编译（便携包已带 exe 则跳过）→ 部署到 `%LOCALAPPDATA%\AgentKnocks\` →
-合并 Claude hook 到 `~/.claude/settings.json`（先备份 `.agentknocks.bak`，保留你已有 hook）→
-写 Codex 的 `~/.codex/hooks.json`（不碰你的 `notify`）→ 开机自启 → 启动托盘。
-**装完重启正在运行的 Claude / Codex 会话**（hook 在会话启动时加载）。
-
-**hook 映射**（自动接入，不覆盖你已有的）：
-
-| 事件 | 状态 |
-|---|---|
-| `UserPromptSubmit` / `PreToolUse` / `PostToolUse` | 处理中 🔵 |
-| `PermissionRequest` | 等待确认 🟠（权限框一弹即触发，无延迟） |
-| `Stop` | 已完成 🟢 ｜ `SessionEnd` 移除会话 |
-| `Notification`（仅 Claude） | 智能区分：空闲"等你输入"→忽略（Stop 已报完成，避免重复弹）；权限→等待 |
-
-- Claude：接入即用。
-- Codex：写全局 `~/.codex/hooks.json`（**不是 config.toml**——桌面 app 不派发它，
-  [openai/codex#16430](https://github.com/openai/codex/issues/16430)）。详见 [`hooks/codex-setup.md`](hooks/codex-setup.md)。
-- pi / 任意 agent：见 [`hooks/generic-setup.md`](hooks/generic-setup.md)，按上面的接入协议挂三态即可。
-
-## 托盘菜单 / 卸载
-
-- 菜单：聚合状态 + 各会话明细 ｜ 🔇 静音 ｜ 🔊 测试声音 ｜ 📁 打开状态目录 ｜
-  🌐 语言（English / 中文）｜ ⏻ 开机自启 ｜ ❌ 退出。双击图标=打开状态目录。
-- 卸载：双击 `uninstall.cmd`（或 `uninstall.ps1`）。停进程 → 只删自己加的 hook（保留你其它配置）→
-  删自启 → 删安装目录。`-KeepState` 保留状态/配置。**实测不影响原 agent 配置**（notify/其它 hook 原封不动）。
-
-## 文件结构
-
+**从源码装**（需 [Rust 工具链](https://rustup.rs)）：
 ```
-Cargo.toml · Cargo.lock
-src/core.rs              纯状态逻辑（无UI，可测）：状态机/聚合/跃迁/推断
-src/app.rs               引擎：notify 监听 + 聚合循环 + status.json
-src/main.rs              入口：--emit（旁观）/ 托盘 / --once / 自启开关
-src/tray.rs              Windows 托盘 UI：彩点 + 菜单 + 声音 + i18n + 自启
-install.cmd · uninstall.cmd   双击装/卸（绕过执行策略）
-install.ps1 · uninstall.ps1
-hooks/  codex-setup.md · generic-setup.md · codex-notify-chain.ps1(备选)
-legacy/csharp/           原 C# 版（归档；即 csharp-final release）
+git clone https://github.com/mazjq/agent-knocks && cd agent-knocks && install.cmd
 ```
-运行时数据（不入库）：`%LOCALAPPDATA%\AgentKnocks\` = `AgentKnocks.exe` · `state\*.json` · `status.json` · `events.log` · `config.json`
+
+安装会部署到 `%LOCALAPPDATA%\AgentKnocks\`，把 Claude hook 合并进 `~/.claude/settings.json`（先备份）+
+写 Codex 的 `~/.codex/hooks.json`（不碰你的 `notify`），建开始菜单快捷方式 + 开机自启，并启动托盘。
+**装完重启正在跑的 Claude/Codex 会话**让 hook 生效。参数：`-NoStart` / `-NoAutoStart` / `-NoClaude` / `-NoCodex`。
+
+hook → 状态：`UserPromptSubmit`/`PreToolUse`/`PostToolUse` → 处理中 · `PermissionRequest` → 等待 ·
+`Stop` → 完成 · `SessionEnd` → 移除。
 
 ## 开发
 
 ```powershell
-cargo test               # 核心状态机测试
-cargo build --release    # 编译 target\release\agentknocks.exe（GUI 子系统，无控制台）
-powershell -ExecutionPolicy Bypass -File install.ps1   # 编译 + 重部署 + 重启托盘
+cargo test               # 核心状态机测试（16 个）
+cargo build --release    # target\release\agentknocks.exe（GUI 子系统，无控制台）
+.\install.ps1            # 编译 + 重部署 + 重启托盘
+.\package.ps1            # 打便携 zip 到 dist\
 ```
-核心逻辑在 `src/core.rs`（无 UI 依赖）；改动先在其 `#[cfg(test)] mod tests` 加用例、跑绿再改实现（TDD）。
-所有界面文案集中在 `src/tray.rs` 的 `I18n`/`t_*` 辅助函数。
+纯逻辑都在 `src/core.rs`（无 UI 依赖、全单测）。TDD：先在它的 `#[cfg(test)] mod tests` 加用例、跑绿，再改实现。
+界面文案是 `src/tray.rs` 里的 `t_*` 函数。
 
-## 已知限制 / TODO
+## 架构
 
-- **Codex 桌面 app** 暂不派发本地 hook（上游 bug [openai/codex#16430](https://github.com/openai/codex/issues/16430)）→
-  `hooks.json` 已就位、修复后自动生效；想立即可用就用 **Codex CLI**。
-- pi 的 hook 机制待确认（已留通用协议兜底）。
-- **macOS / Linux**：核心与引擎已跨平台，托盘（`tray.rs`）和自启暂为 Windows——
-  其它平台的原生事件循环 + `auto-launch` 在路线图上（[#1](https://github.com/mazjq/agent-knocks/issues/1)）。
-- **气泡 toast**（C# 版有）在 Rust 托盘待补。
-- **click-to-focus**（跳到 agent 窗口）——见 [#2](https://github.com/mazjq/agent-knocks/issues/2)。
+hook 驱动、三段式、不轮询：
+
+```
+ ① agent hook                 ② 状态文件 = 事件总线                 ③ 常驻托盘
+ claude/codex ─emit─► %LOCALAPPDATA%\AgentKnocks\state\<agent>__<会话>.json
+              (旁观:不输出/退出码0)               ─► notify 监听 → 聚合 → 变色 + 声音 + 气泡
+```
+
+- **`src/core.rs`** — 纯状态机：优先级、JSON 解析、聚合、过期淘汰、跃迁发声、`select_window`（聚焦目标选择）。跨平台、单测覆盖。
+- **`src/app.rs`** — 引擎：`notify` 文件监听 + ≤2s 淘汰循环；写 `status.json`（聚合态，供外部读取）。
+- **`src/main.rs`** — `--emit`（旁观；捕获 agent 的 cwd + 窗口句柄）/ 托盘 / `--once`。
+- **`src/tray.rs`** — Windows 托盘 UI：彩点 + 菜单 + 声音 + 气泡 + i18n + 自启 + 点击跳转（Win32）。
+
+**任何东西都能驱动它**（hook 契约）：
+```
+AgentKnocks.exe --emit --agent <名> --status <processing|waiting|done|end> [--key <会话id>] [--title <显示名>]
+```
+或把 hook 的 JSON 从 stdin 管道喂入。外部工具可直接读 `state\*.json` / `status.json`。
+
+## 限制
+
+- 仅 Windows——`core.rs`/`app.rs` 已跨平台，macOS/Linux 托盘在[路线图 (#1)](https://github.com/mazjq/agent-knocks/issues/1)。
+- Codex **桌面 app** 暂不派发本地 hook（[openai/codex#16430](https://github.com/openai/codex/issues/16430)）→ `hooks.json` 已就位，或用 Codex CLI。
+- 多个 agent 挤在**同一个** VSCode 窗口的终端里 → 只能把窗口拉到前面，没法切到具体终端 tab。
