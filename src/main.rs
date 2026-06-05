@@ -143,16 +143,19 @@ fn emit(args: &[String]) -> i32 {
         }
     }
 
+    let pid = hwnd_pid(hwnd); // owning process of the host window; used to scope click-to-focus
+
     let norm = status_norm(&status);
     let ts = now_unix();
     let json = format!(
-        "{{\"agent\":\"{}\",\"session\":\"{}\",\"status\":\"{}\",\"title\":\"{}\",\"ts\":{},\"hwnd\":{},\"cwd\":\"{}\"}}",
+        "{{\"agent\":\"{}\",\"session\":\"{}\",\"status\":\"{}\",\"title\":\"{}\",\"ts\":{},\"hwnd\":{},\"pid\":{},\"cwd\":\"{}\"}}",
         json_esc(&agent),
         json_esc(&session),
         norm,
         json_esc(&title),
         ts,
         hwnd,
+        pid,
         json_esc(&cwd)
     );
 
@@ -256,6 +259,25 @@ fn agent_window_hwnd() -> Option<i64> {
 }
 #[cfg(not(windows))]
 fn foreground_hwnd() -> i64 {
+    0
+}
+
+// Owning process id of a window handle (0 if none).
+#[cfg(windows)]
+fn hwnd_pid(hwnd: i64) -> i64 {
+    if hwnd == 0 {
+        return 0;
+    }
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+    let mut pid: u32 = 0;
+    unsafe {
+        GetWindowThreadProcessId(hwnd as isize as HWND, &mut pid);
+    }
+    pid as i64
+}
+#[cfg(not(windows))]
+fn hwnd_pid(_: i64) -> i64 {
     0
 }
 

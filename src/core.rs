@@ -130,7 +130,8 @@ pub struct Session {
     pub tag: String, // short session tag, disambiguates same-project windows
     pub state: Status,
     pub updated: i64, // unix seconds
-    pub hwnd: i64,    // foreground window handle captured at emit time (0 if none); click-to-focus
+    pub hwnd: i64,    // host window handle captured at emit time (0 if none); click-to-focus
+    pub pid: i64,     // owning process of the host window; scopes focus to the agent's app
     pub cwd: String,  // agent working dir; its folder segments target the right window
 }
 
@@ -154,6 +155,7 @@ impl Session {
             state,
             updated,
             hwnd: json_long(json, "hwnd"),
+            pid: json_long(json, "pid"),
             cwd: json_str(json, "cwd").unwrap_or_default(),
         })
     }
@@ -346,22 +348,32 @@ pub fn infer_notification(stdin_json: &str) -> &'static str {
     "waiting"
 }
 
-// Choose which window to focus for a session. Try each candidate folder name
-// (deepest first: the agent's cwd folder, then its parents) against the visible
-// window titles — the workspace folder VSCode shows is always one of these, and the
-// deepest match is the most specific. The captured handle is only a fallback for
-// non-VSCode terminals (where it's reliable; all VSCode windows share one process so
-// the handle can't distinguish them).
-pub fn select_window(target_hwnd: i64, names: &[&str], windows: &[(i64, String)]) -> Option<i64> {
+// Choose which window to focus for a session. `windows` is (hwnd, title, pid).
+// Candidates are scoped to the agent's host process (`target_pid`) when known, so a
+// browser or other app whose title merely mentions the project is never focused.
+// Within those, try each candidate folder name (deepest first: the cwd folder, then
+// its parents) against the titles; deepest match is most specific. Falls back to the
+// captured host window itself, then none.
+pub fn select_window(
+    target_hwnd: i64,
+    target_pid: i64,
+    names: &[&str],
+    windows: &[(i64, String, i64)],
+) -> Option<i64> {
+    let host: Vec<&(i64, String, i64)> = if target_pid != 0 {
+        windows.iter().filter(|(_, _, p)| *p == target_pid).collect()
+    } else {
+        windows.iter().collect()
+    };
     for name in names {
         let needle = name.trim().to_lowercase();
         if needle.is_empty() {
             continue;
         }
-        let matches: Vec<i64> = windows
+        let matches: Vec<i64> = host
             .iter()
-            .filter(|(_, t)| t.to_lowercase().contains(&needle))
-            .map(|(h, _)| *h)
+            .filter(|(_, t, _)| t.to_lowercase().contains(&needle))
+            .map(|(h, _, _)| *h)
             .collect();
         if matches.len() == 1 {
             return Some(matches[0]);
@@ -375,7 +387,7 @@ pub fn select_window(target_hwnd: i64, names: &[&str], windows: &[(i64, String)]
         }
         // 0 matches for this name -> try the next (shallower) name
     }
-    if target_hwnd != 0 && windows.iter().any(|(h, _)| *h == target_hwnd) {
+    if target_hwnd != 0 && windows.iter().any(|(h, _, _)| *h == target_hwnd) {
         return Some(target_hwnd);
     }
     None
@@ -528,61 +540,72 @@ mod tests {
         assert_eq!(infer_auto("permission needed"), "waiting");
     }
 
+    // windows tuple: (hwnd, title, pid)
     #[test]
     fn select_title_wins_over_handle() {
-        // The captured handle (222) is the shared/foreground VSCode window and can't
-        // distinguish windows; the project name in a title can. Title must win.
         let wins = vec![
-            (111i64, "MyProj - file.rs - Visual Studio Code".to_string()),
-            (222i64, "Other - main.rs - Visual Studio Code".to_string()),
+            (111i64, "MyProj - file.rs - Visual Studio Code".to_string(), 1i64),
+            (222i64, "Other - main.rs - Visual Studio Code".to_string(), 1i64),
         ];
-        assert_eq!(select_window(222, &["MyProj"], &wins), Some(111));
+        assert_eq!(select_window(222, 0, &["MyProj"], &wins), Some(111));
     }
 
     #[test]
     fn select_handle_fallback_when_no_title_match() {
-        // No window title contains the name -> use the captured handle (e.g. Windows
-        // Terminal, where the handle is reliable).
-        let wins = vec![(111i64, "Alpha".to_string()), (222i64, "Beta".to_string())];
-        assert_eq!(select_window(222, &["MyProj"], &wins), Some(222));
-        assert_eq!(select_window(0, &["MyProj"], &wins), None); // no match, no handle
+        let wins = vec![
+            (111i64, "Alpha".to_string(), 1i64),
+            (222i64, "Beta".to_string(), 1i64),
+        ];
+        assert_eq!(select_window(222, 0, &["MyProj"], &wins), Some(222));
+        assert_eq!(select_window(0, 0, &["MyProj"], &wins), None);
     }
 
     #[test]
     fn select_multi_title_match_prefers_handle() {
         let wins = vec![
-            (111i64, "Proj one - Visual Studio Code".to_string()),
-            (222i64, "Proj two - Visual Studio Code".to_string()),
+            (111i64, "Proj one - Visual Studio Code".to_string(), 1i64),
+            (222i64, "Proj two - Visual Studio Code".to_string(), 1i64),
         ];
-        assert_eq!(select_window(222, &["Proj"], &wins), Some(222));
-        assert_eq!(select_window(0, &["Proj"], &wins), Some(111));
+        assert_eq!(select_window(222, 0, &["Proj"], &wins), Some(222));
+        assert_eq!(select_window(0, 0, &["Proj"], &wins), Some(111));
     }
 
     #[test]
     fn select_none_when_no_match() {
-        let wins = vec![(111i64, "Something Else".to_string())];
-        assert_eq!(select_window(0, &["MyProj"], &wins), None);
-        assert_eq!(select_window(0, &[""], &wins), None);
-        assert_eq!(select_window(0, &["MyProj"], &[]), None);
+        let wins = vec![(111i64, "Something Else".to_string(), 1i64)];
+        assert_eq!(select_window(0, 0, &["MyProj"], &wins), None);
+        assert_eq!(select_window(0, 0, &[""], &wins), None);
+        assert_eq!(select_window(0, 0, &["MyProj"], &[]), None);
     }
 
     #[test]
     fn select_walks_up_to_parent_folder() {
-        // agent runs in .../MyTools/agent-knocks but VSCode is opened at parent
-        // "MyTools" -> no window has "agent-knocks", fall through to "MyTools".
-        let wins = vec![(111i64, "file.rs - MyTools - Visual Studio Code".to_string())];
-        assert_eq!(select_window(0, &["agent-knocks", "MyTools"], &wins), Some(111));
+        let wins = vec![(111i64, "file.rs - MyTools - Visual Studio Code".to_string(), 1i64)];
+        assert_eq!(select_window(0, 0, &["agent-knocks", "MyTools"], &wins), Some(111));
     }
 
     #[test]
     fn select_deepest_name_wins() {
-        // both a project window and a parent window exist -> the deeper (more
-        // specific) name matches first.
         let wins = vec![
-            (111i64, "agent-knocks - Visual Studio Code".to_string()),
-            (222i64, "MyTools - Visual Studio Code".to_string()),
+            (111i64, "agent-knocks - Visual Studio Code".to_string(), 1i64),
+            (222i64, "MyTools - Visual Studio Code".to_string(), 1i64),
         ];
-        assert_eq!(select_window(0, &["agent-knocks", "MyTools"], &wins), Some(111));
+        assert_eq!(select_window(0, 0, &["agent-knocks", "MyTools"], &wins), Some(111));
+    }
+
+    #[test]
+    fn select_scopes_to_host_process() {
+        // VSCode (host pid 5000) shows the workspace "MyTools"; a browser tab (pid
+        // 9000) on the GitHub repo has "agent-knocks" in its title.
+        let wins = vec![
+            (111i64, "MyTools - main.rs - Visual Studio Code".to_string(), 5000i64),
+            (222i64, "mazjq/agent-knocks - Google Chrome".to_string(), 9000i64),
+        ];
+        // scoped to the host process -> the browser is ignored; "agent-knocks" finds
+        // nothing in-process, so it falls to "MyTools" -> the VSCode window.
+        assert_eq!(select_window(0, 5000, &["agent-knocks", "MyTools"], &wins), Some(111));
+        // without a host pid, the loose match would hit the browser (documented fallback)
+        assert_eq!(select_window(0, 0, &["agent-knocks", "MyTools"], &wins), Some(222));
     }
 
     #[test]

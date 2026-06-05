@@ -453,15 +453,15 @@ fn focus_window(hwnd: i64) {
     }
 }
 
-// Snapshot of visible, titled, top-level windows: (hwnd, title). Minimized windows
-// still appear (they keep WS_VISIBLE).
-fn collect_windows() -> Vec<(i64, String)> {
+// Snapshot of visible, titled, top-level windows: (hwnd, title, pid). Minimized
+// windows still appear (they keep WS_VISIBLE).
+fn collect_windows() -> Vec<(i64, String, i64)> {
     use windows_sys::Win32::Foundation::{HWND, LPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowTextLengthW, GetWindowTextW, IsWindowVisible,
+        EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
     };
     struct C {
-        items: Vec<(i64, String)>,
+        items: Vec<(i64, String, i64)>,
     }
     unsafe extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> i32 {
         let c = &mut *(lparam as *mut C);
@@ -471,8 +471,13 @@ fn collect_windows() -> Vec<(i64, String)> {
                 let mut buf = vec![0u16; (len + 1) as usize];
                 let n = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
                 if n > 0 {
-                    c.items
-                        .push((hwnd as isize as i64, String::from_utf16_lossy(&buf[..n as usize])));
+                    let mut pid: u32 = 0;
+                    GetWindowThreadProcessId(hwnd, &mut pid);
+                    c.items.push((
+                        hwnd as isize as i64,
+                        String::from_utf16_lossy(&buf[..n as usize]),
+                        pid as i64,
+                    ));
                 }
             }
         }
@@ -485,13 +490,13 @@ fn collect_windows() -> Vec<(i64, String)> {
     }
 }
 
-// Focus a session's window: match the cwd folder names (deepest first) against
-// window titles via the pure selector, then raise it.
+// Focus a session's window: scope to the agent's host process, then match the cwd
+// folder names (deepest first) against window titles, then raise it.
 fn focus_session(s: &Session) {
     let wins = collect_windows();
     let names = crate::core::cwd_names(&s.cwd, &s.title, 4);
     let name_refs: Vec<&str> = names.iter().map(|n| n.as_str()).collect();
-    if let Some(h) = crate::core::select_window(s.hwnd, &name_refs, &wins) {
+    if let Some(h) = crate::core::select_window(s.hwnd, s.pid, &name_refs, &wins) {
         focus_window(h);
     }
 }
