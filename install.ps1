@@ -22,13 +22,17 @@ $Utf8NoBom = New-Object System.Text.UTF8Encoding $false
 function Read-Utf8($p)  { return [System.IO.File]::ReadAllText($p, [System.Text.Encoding]::UTF8) }
 function Write-Utf8($p, $text) { [System.IO.File]::WriteAllText($p, $text, $Utf8NoBom) }
 
-# ---------- 1. build ----------
-$exeSrc = Join-Path $root "target\release\agentknocks.exe"
+# ---------- 1. obtain the exe ----------
+# Prefer a bundled prebuilt exe (portable Release zip), then a local dev build,
+# else build with cargo (needs the Rust toolchain).
+$exeSrc = Join-Path $root "bin\agentknocks.exe"
+if (-not (Test-Path $exeSrc)) { $exeSrc = Join-Path $root "target\release\agentknocks.exe" }
 if (-not (Test-Path $exeSrc)) {
-    Write-Host "Building agentknocks.exe (cargo build --release) ..."
+    Write-Host "No prebuilt exe found; building (cargo build --release) ..."
     Push-Location $root
-    try { & cargo build --release; if ($LASTEXITCODE -ne 0) { throw "cargo build failed" } }
+    try { & cargo build --release; if ($LASTEXITCODE -ne 0) { throw "cargo build failed (install the Rust toolchain from https://rustup.rs, or use the prebuilt Release zip)" } }
     finally { Pop-Location }
+    $exeSrc = Join-Path $root "target\release\agentknocks.exe"
 }
 
 # ---------- 2. deploy ----------
