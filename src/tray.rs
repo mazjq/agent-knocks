@@ -2,7 +2,7 @@
 // full context menu, intuitive sound earcons, and EN/中文 i18n. Driven by the
 // app.rs engine; a Win32 message pump keeps tray-icon's window proc alive.
 use crate::app::{now_unix, App};
-use crate::core::Status;
+use crate::core::{Session, Status};
 use std::path::Path;
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
@@ -215,7 +215,7 @@ struct Ids {
     lang_en: MenuId,
     lang_zh: MenuId,
     start_login: MenuId,
-    sessions: Vec<(MenuId, i64)>, // per-session menu line -> hwnd, for click-to-focus
+    sessions: Vec<(MenuId, Session)>, // per-session menu line -> session, for click-to-focus
 }
 
 fn build_menu(app: &App, agg: Status, l: Lang, muted: bool) -> (Menu, Ids) {
@@ -233,7 +233,7 @@ fn build_menu(app: &App, agg: Status, l: Lang, muted: bool) -> (Menu, Ids) {
             .cmp(&(a.state as i32))
             .then(b.updated.cmp(&a.updated))
     });
-    let mut session_items: Vec<(MenuId, i64)> = Vec::new();
+    let mut session_items: Vec<(MenuId, Session)> = Vec::new();
     if sessions.is_empty() {
         let _ = menu.append(&MenuItem::new(t_no_sessions(l), false, None));
     } else {
@@ -252,7 +252,7 @@ fn build_menu(app: &App, agg: Status, l: Lang, muted: bool) -> (Menu, Ids) {
                 t_jump_hint(l)
             );
             let it = MenuItem::new(line, true, None);
-            session_items.push((it.id().clone(), s.hwnd));
+            session_items.push((it.id().clone(), (*s).clone()));
             let _ = menu.append(&it);
         }
     }
@@ -399,25 +399,100 @@ fn show_toast(title: &str, body: &str) {
         .show();
 }
 
-// Bring the captured window to the foreground (restoring if minimized).
+// Force a window to the foreground, restoring it if minimized. Uses the
+// AttachThreadInput dance + BringWindowToTop so it actually raises (a plain
+// SetForegroundWindow from a background process only flashes the taskbar).
 fn focus_window(hwnd: i64) {
     if hwnd == 0 {
         return;
     }
     use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE,
+        BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic,
+        SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
     };
     unsafe {
         let h = hwnd as isize as HWND;
         if IsIconic(h) != 0 {
-            ShowWindow(h, SW_RESTORE);
+            ShowWindow(h, SW_RESTORE); // un-minimize
+        } else {
+            ShowWindow(h, SW_SHOW);
         }
+        let fg = GetForegroundWindow();
+        let cur = GetCurrentThreadId();
+        let fg_tid = GetWindowThreadProcessId(fg, std::ptr::null_mut());
+        let tgt_tid = GetWindowThreadProcessId(h, std::ptr::null_mut());
+        let a_fg = fg_tid != 0 && fg_tid != cur;
+        let a_tgt = tgt_tid != 0 && tgt_tid != cur && tgt_tid != fg_tid;
+        if a_fg {
+            AttachThreadInput(cur, fg_tid, 1);
+        }
+        if a_tgt {
+            AttachThreadInput(cur, tgt_tid, 1);
+        }
+        BringWindowToTop(h);
         SetForegroundWindow(h);
+        if a_tgt {
+            AttachThreadInput(cur, tgt_tid, 0);
+        }
+        if a_fg {
+            AttachThreadInput(cur, fg_tid, 0);
+        }
     }
 }
 
-// Focus the window of the highest-priority session (waiting first) that has a handle.
+// Find a visible window whose title contains `needle` (case-insensitive). VSCode /
+// terminal titles include the project folder name, so this targets the right window
+// even across multiple windows. Minimized windows still match (they keep WS_VISIBLE).
+fn find_window_by_title(needle: &str) -> Option<i64> {
+    if needle.trim().is_empty() {
+        return None;
+    }
+    use windows_sys::Win32::Foundation::{HWND, LPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowTextLengthW, GetWindowTextW, IsWindowVisible,
+    };
+    struct C {
+        items: Vec<(isize, String)>,
+    }
+    unsafe extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> i32 {
+        let c = &mut *(lparam as *mut C);
+        if IsWindowVisible(hwnd) != 0 {
+            let len = GetWindowTextLengthW(hwnd);
+            if len > 0 {
+                let mut buf = vec![0u16; (len + 1) as usize];
+                let n = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+                if n > 0 {
+                    c.items
+                        .push((hwnd as isize, String::from_utf16_lossy(&buf[..n as usize])));
+                }
+            }
+        }
+        1
+    }
+    unsafe {
+        let mut c = C { items: Vec::new() };
+        EnumWindows(Some(cb), &mut c as *mut C as LPARAM);
+        let nl = needle.to_lowercase();
+        c.items
+            .iter()
+            .find(|(_, t)| t.to_lowercase().contains(&nl))
+            .map(|&(h, _)| h as i64)
+    }
+}
+
+// Focus a session's window: prefer matching the project name in a window title,
+// fall back to the process-tree handle captured at emit time.
+fn focus_session(s: &Session) {
+    if let Some(h) = find_window_by_title(&s.title) {
+        focus_window(h);
+    } else if s.hwnd != 0 {
+        focus_window(s.hwnd);
+    }
+}
+
+// Focus the highest-priority session (waiting first).
 fn focus_top_session(app: &App) {
     let mut sessions = app.sessions();
     sessions.sort_by(|a, b| {
@@ -425,8 +500,8 @@ fn focus_top_session(app: &App) {
             .cmp(&(a.state as i32))
             .then(b.updated.cmp(&a.updated))
     });
-    if let Some(s) = sessions.iter().find(|s| s.hwnd != 0) {
-        focus_window(s.hwnd);
+    if let Some(s) = sessions.first() {
+        focus_session(s);
     }
 }
 
@@ -513,10 +588,8 @@ pub fn run() {
             } else if ev.id == ids.start_login {
                 set_autostart(!autostart_enabled());
                 ids = refresh(&tray, &app, agg, lang, muted);
-            } else if let Some(&(_, hwnd)) =
-                ids.sessions.iter().find(|(id, _)| *id == ev.id)
-            {
-                focus_window(hwnd);
+            } else if let Some(item) = ids.sessions.iter().find(|(id, _)| *id == ev.id) {
+                focus_session(&item.1);
             }
         }
 
