@@ -8,14 +8,12 @@
 #
 # Configure the original program below, then set in ~/.codex/config.toml:
 #   notify = ["powershell","-NoProfile","-ExecutionPolicy","Bypass","-File",
-#             "E:\\AI My Company\\MyTools\\agent-knocks\\hooks\\codex-notify-chain.ps1"]
+#             "C:\\path\\to\\agent-knocks\\hooks\\codex-notify-chain.ps1"]
 
 # ---- EDIT THIS: your previous notify program + its fixed leading args ----
-# Leave as @() if you had no previous notify program.
-$Original = @(
-    "C:\Users\Administrator\.codex\plugins\cache\openai-bundled\computer-use\26.527.60818\node_modules\@oai\sky\bin\windows\codex-computer-use.exe",
-    "turn-ended"
-)
+# Leave as @() if you had no previous notify program. Example:
+#   $Original = @("C:\Users\<you>\.codex\plugins\...\codex-computer-use.exe", "turn-ended")
+$Original = @()
 # -------------------------------------------------------------------------
 
 $exe = Join-Path $env:LOCALAPPDATA "AgentKnocks\AgentKnocks.exe"

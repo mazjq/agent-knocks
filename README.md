@@ -10,6 +10,10 @@ that agent's window. Native **Rust** single EXE (~0.45 MB, ~10 MB resident), no 
   <img src="pic/colors.png" width="260" alt="tri-state tray dots"><br>
   <sub>🟢 Done ｜ 🔵 Working ｜ 🟠 Waiting</sub>
 </p>
+<p align="center">
+  <img src="pic/details.png" width="320" alt="tray menu — per-session detail"><br>
+  <sub>Right-click: each session's status / elapsed / project · ↗ jump · mute · test sound · language · start at login</sub>
+</p>
 
 > The original C# / .NET build is archived under [`legacy/csharp/`](legacy/csharp/) and the
 > [`csharp-final`](https://github.com/mazjq/agent-knocks/releases/tag/csharp-final) release.

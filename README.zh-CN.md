@@ -10,6 +10,10 @@ agent 需要你或干完活时，它会"敲门"——变色 + 声音 + 气泡，
   <img src="pic/colors.png" width="260" alt="三态彩点"><br>
   <sub>🟢 已完成 ｜ 🔵 处理中 ｜ 🟠 等待确认</sub>
 </p>
+<p align="center">
+  <img src="pic/details_zh.png" width="320" alt="托盘菜单 — 各会话明细"><br>
+  <sub>右键：每个会话的状态 / 耗时 / 项目 · ↗ 跳转 · 静音 · 测试声音 · 语言 · 开机自启</sub>
+</p>
 
 > 原 C# / .NET 版已归档在 [`legacy/csharp/`](legacy/csharp/) 与 [`csharp-final`](https://github.com/mazjq/agent-knocks/releases/tag/csharp-final) release。
 

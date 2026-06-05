@@ -588,8 +588,8 @@ mod tests {
     #[test]
     fn cwd_names_deepest_first() {
         assert_eq!(
-            cwd_names("E:\\AI My Company\\MyTools\\agent-knocks", "x", 3),
-            vec!["agent-knocks", "MyTools", "AI My Company"]
+            cwd_names("C:\\dev\\acme\\tools\\agent-knocks", "x", 3),
+            vec!["agent-knocks", "tools", "acme"]
         );
         assert_eq!(cwd_names("", "proj", 3), vec!["proj"]); // empty cwd -> fallback
         assert_eq!(cwd_names("/a/b/c/d", "x", 2), vec!["d", "c"]); // cap respected
