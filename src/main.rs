@@ -129,25 +129,31 @@ fn emit(args: &[String]) -> i32 {
         title = agent.clone();
     }
 
-    // capture the window the user is looking at when this hook fires (for click-to-focus);
-    // fall back to the previously stored handle if none.
+    // capture the window the user is looking at when this hook fires (fallback for
+    // click-to-focus); preserve previously stored handle/cwd when this event lacks them.
     let mut hwnd = foreground_hwnd();
-    if hwnd == 0 && file.exists() {
+    if (hwnd == 0 || cwd.is_empty()) && file.exists() {
         if let Ok(prev) = std::fs::read_to_string(&file) {
-            hwnd = json_long(&prev, "hwnd");
+            if hwnd == 0 {
+                hwnd = json_long(&prev, "hwnd");
+            }
+            if cwd.is_empty() {
+                cwd = json_str(&prev, "cwd").unwrap_or_default();
+            }
         }
     }
 
     let norm = status_norm(&status);
     let ts = now_unix();
     let json = format!(
-        "{{\"agent\":\"{}\",\"session\":\"{}\",\"status\":\"{}\",\"title\":\"{}\",\"ts\":{},\"hwnd\":{}}}",
+        "{{\"agent\":\"{}\",\"session\":\"{}\",\"status\":\"{}\",\"title\":\"{}\",\"ts\":{},\"hwnd\":{},\"cwd\":\"{}\"}}",
         json_esc(&agent),
         json_esc(&session),
         norm,
         json_esc(&title),
         ts,
-        hwnd
+        hwnd,
+        json_esc(&cwd)
     );
 
     // atomic-ish: write tmp then rename

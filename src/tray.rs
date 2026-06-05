@@ -485,11 +485,13 @@ fn collect_windows() -> Vec<(i64, String)> {
     }
 }
 
-// Focus a session's window: pure selector (captured handle first, then project-name
-// title match), then raise it.
+// Focus a session's window: match the cwd folder names (deepest first) against
+// window titles via the pure selector, then raise it.
 fn focus_session(s: &Session) {
     let wins = collect_windows();
-    if let Some(h) = crate::core::select_window(s.hwnd, &s.title, &wins) {
+    let names = crate::core::cwd_names(&s.cwd, &s.title, 4);
+    let name_refs: Vec<&str> = names.iter().map(|n| n.as_str()).collect();
+    if let Some(h) = crate::core::select_window(s.hwnd, &name_refs, &wins) {
         focus_window(h);
     }
 }

@@ -131,6 +131,7 @@ pub struct Session {
     pub state: Status,
     pub updated: i64, // unix seconds
     pub hwnd: i64,    // foreground window handle captured at emit time (0 if none); click-to-focus
+    pub cwd: String,  // agent working dir; its folder segments target the right window
 }
 
 impl Session {
@@ -153,6 +154,7 @@ impl Session {
             state,
             updated,
             hwnd: json_long(json, "hwnd"),
+            cwd: json_str(json, "cwd").unwrap_or_default(),
         })
     }
 }
@@ -344,15 +346,18 @@ pub fn infer_notification(stdin_json: &str) -> &'static str {
     "waiting"
 }
 
-// Choose which window to focus for a session, given the visible top-level windows
-// (hwnd, title). Prefer the captured process-tree handle when it is itself a real
-// visible window; else match the project name inside a window title; else none.
-pub fn select_window(target_hwnd: i64, target_title: &str, windows: &[(i64, String)]) -> Option<i64> {
-    // Title match first: the project name in a window title distinguishes separate
-    // windows (VSCode shows the workspace folder), whereas the captured handle can be
-    // a shared/foreground window (all VSCode windows share one process).
-    let needle = target_title.trim().to_lowercase();
-    if !needle.is_empty() {
+// Choose which window to focus for a session. Try each candidate folder name
+// (deepest first: the agent's cwd folder, then its parents) against the visible
+// window titles — the workspace folder VSCode shows is always one of these, and the
+// deepest match is the most specific. The captured handle is only a fallback for
+// non-VSCode terminals (where it's reliable; all VSCode windows share one process so
+// the handle can't distinguish them).
+pub fn select_window(target_hwnd: i64, names: &[&str], windows: &[(i64, String)]) -> Option<i64> {
+    for name in names {
+        let needle = name.trim().to_lowercase();
+        if needle.is_empty() {
+            continue;
+        }
         let matches: Vec<i64> = windows
             .iter()
             .filter(|(_, t)| t.to_lowercase().contains(&needle))
@@ -368,13 +373,30 @@ pub fn select_window(target_hwnd: i64, target_title: &str, windows: &[(i64, Stri
             }
             return Some(matches[0]);
         }
+        // 0 matches for this name -> try the next (shallower) name
     }
-    // no title match -> the captured handle if it's a real visible window
-    // (reliable for non-VSCode terminals where the shell is a direct child)
     if target_hwnd != 0 && windows.iter().any(|(h, _)| *h == target_hwnd) {
         return Some(target_hwnd);
     }
     None
+}
+
+// Candidate folder names to match against window titles, deepest first: the cwd's
+// folder segments (the workspace folder is always one of them), capped to `max`.
+// Falls back to `fallback` (the display title) when cwd is empty.
+pub fn cwd_names(cwd: &str, fallback: &str, max: usize) -> Vec<String> {
+    let mut names: Vec<String> = cwd
+        .split(|c| c == '\\' || c == '/')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty() && !(s.len() == 2 && s.ends_with(':'))) // skip "E:"
+        .map(|s| s.to_string())
+        .rev() // deepest first
+        .collect();
+    names.truncate(max);
+    if names.is_empty() && !fallback.trim().is_empty() {
+        names.push(fallback.to_string());
+    }
+    names
 }
 
 // =====================================================================
@@ -514,16 +536,16 @@ mod tests {
             (111i64, "MyProj - file.rs - Visual Studio Code".to_string()),
             (222i64, "Other - main.rs - Visual Studio Code".to_string()),
         ];
-        assert_eq!(select_window(222, "MyProj", &wins), Some(111));
+        assert_eq!(select_window(222, &["MyProj"], &wins), Some(111));
     }
 
     #[test]
     fn select_handle_fallback_when_no_title_match() {
-        // No window title contains the project -> use the captured handle (e.g.
-        // Windows Terminal, where the handle is reliable).
+        // No window title contains the name -> use the captured handle (e.g. Windows
+        // Terminal, where the handle is reliable).
         let wins = vec![(111i64, "Alpha".to_string()), (222i64, "Beta".to_string())];
-        assert_eq!(select_window(222, "MyProj", &wins), Some(222));
-        assert_eq!(select_window(0, "MyProj", &wins), None); // no match, no handle
+        assert_eq!(select_window(222, &["MyProj"], &wins), Some(222));
+        assert_eq!(select_window(0, &["MyProj"], &wins), None); // no match, no handle
     }
 
     #[test]
@@ -532,29 +554,45 @@ mod tests {
             (111i64, "Proj one - Visual Studio Code".to_string()),
             (222i64, "Proj two - Visual Studio Code".to_string()),
         ];
-        // ambiguous title -> if the handle is one of them, prefer it; else first
-        assert_eq!(select_window(222, "Proj", &wins), Some(222));
-        assert_eq!(select_window(0, "Proj", &wins), Some(111));
-    }
-
-    #[test]
-    fn select_falls_back_to_title_match() {
-        let wins = vec![
-            (111i64, "Other - Visual Studio Code".to_string()),
-            (222i64, "MyProj - main.rs - Visual Studio Code".to_string()),
-        ];
-        // no captured handle -> match the project name inside a window title
-        assert_eq!(select_window(0, "MyProj", &wins), Some(222));
-        // captured handle not among the visible windows -> also fall back to title
-        assert_eq!(select_window(999, "MyProj", &wins), Some(222));
+        assert_eq!(select_window(222, &["Proj"], &wins), Some(222));
+        assert_eq!(select_window(0, &["Proj"], &wins), Some(111));
     }
 
     #[test]
     fn select_none_when_no_match() {
         let wins = vec![(111i64, "Something Else".to_string())];
-        assert_eq!(select_window(0, "MyProj", &wins), None);
-        assert_eq!(select_window(0, "", &wins), None); // empty title, no handle
-        assert_eq!(select_window(0, "MyProj", &[]), None); // no windows
+        assert_eq!(select_window(0, &["MyProj"], &wins), None);
+        assert_eq!(select_window(0, &[""], &wins), None);
+        assert_eq!(select_window(0, &["MyProj"], &[]), None);
+    }
+
+    #[test]
+    fn select_walks_up_to_parent_folder() {
+        // agent runs in .../MyTools/agent-knocks but VSCode is opened at parent
+        // "MyTools" -> no window has "agent-knocks", fall through to "MyTools".
+        let wins = vec![(111i64, "file.rs - MyTools - Visual Studio Code".to_string())];
+        assert_eq!(select_window(0, &["agent-knocks", "MyTools"], &wins), Some(111));
+    }
+
+    #[test]
+    fn select_deepest_name_wins() {
+        // both a project window and a parent window exist -> the deeper (more
+        // specific) name matches first.
+        let wins = vec![
+            (111i64, "agent-knocks - Visual Studio Code".to_string()),
+            (222i64, "MyTools - Visual Studio Code".to_string()),
+        ];
+        assert_eq!(select_window(0, &["agent-knocks", "MyTools"], &wins), Some(111));
+    }
+
+    #[test]
+    fn cwd_names_deepest_first() {
+        assert_eq!(
+            cwd_names("E:\\AI My Company\\MyTools\\agent-knocks", "x", 3),
+            vec!["agent-knocks", "MyTools", "AI My Company"]
+        );
+        assert_eq!(cwd_names("", "proj", 3), vec!["proj"]); // empty cwd -> fallback
+        assert_eq!(cwd_names("/a/b/c/d", "x", 2), vec!["d", "c"]); // cap respected
     }
 
     #[test]
