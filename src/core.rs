@@ -348,14 +348,31 @@ pub fn infer_notification(stdin_json: &str) -> &'static str {
 // (hwnd, title). Prefer the captured process-tree handle when it is itself a real
 // visible window; else match the project name inside a window title; else none.
 pub fn select_window(target_hwnd: i64, target_title: &str, windows: &[(i64, String)]) -> Option<i64> {
-    if target_hwnd != 0 && windows.iter().any(|(h, _)| *h == target_hwnd) {
-        return Some(target_hwnd);
-    }
+    // Title match first: the project name in a window title distinguishes separate
+    // windows (VSCode shows the workspace folder), whereas the captured handle can be
+    // a shared/foreground window (all VSCode windows share one process).
     let needle = target_title.trim().to_lowercase();
     if !needle.is_empty() {
-        if let Some((h, _)) = windows.iter().find(|(_, t)| t.to_lowercase().contains(&needle)) {
-            return Some(*h);
+        let matches: Vec<i64> = windows
+            .iter()
+            .filter(|(_, t)| t.to_lowercase().contains(&needle))
+            .map(|(h, _)| *h)
+            .collect();
+        if matches.len() == 1 {
+            return Some(matches[0]);
         }
+        if matches.len() > 1 {
+            // ambiguous: prefer the captured handle if it's among the matches, else first
+            if target_hwnd != 0 && matches.contains(&target_hwnd) {
+                return Some(target_hwnd);
+            }
+            return Some(matches[0]);
+        }
+    }
+    // no title match -> the captured handle if it's a real visible window
+    // (reliable for non-VSCode terminals where the shell is a direct child)
+    if target_hwnd != 0 && windows.iter().any(|(h, _)| *h == target_hwnd) {
+        return Some(target_hwnd);
     }
     None
 }
@@ -490,14 +507,34 @@ mod tests {
     }
 
     #[test]
-    fn select_prefers_captured_hwnd() {
-        // captured hwnd 222 is a real visible window -> use it, even though another
-        // window's title also contains the project name
+    fn select_title_wins_over_handle() {
+        // The captured handle (222) is the shared/foreground VSCode window and can't
+        // distinguish windows; the project name in a title can. Title must win.
         let wins = vec![
             (111i64, "MyProj - file.rs - Visual Studio Code".to_string()),
             (222i64, "Other - main.rs - Visual Studio Code".to_string()),
         ];
+        assert_eq!(select_window(222, "MyProj", &wins), Some(111));
+    }
+
+    #[test]
+    fn select_handle_fallback_when_no_title_match() {
+        // No window title contains the project -> use the captured handle (e.g.
+        // Windows Terminal, where the handle is reliable).
+        let wins = vec![(111i64, "Alpha".to_string()), (222i64, "Beta".to_string())];
         assert_eq!(select_window(222, "MyProj", &wins), Some(222));
+        assert_eq!(select_window(0, "MyProj", &wins), None); // no match, no handle
+    }
+
+    #[test]
+    fn select_multi_title_match_prefers_handle() {
+        let wins = vec![
+            (111i64, "Proj one - Visual Studio Code".to_string()),
+            (222i64, "Proj two - Visual Studio Code".to_string()),
+        ];
+        // ambiguous title -> if the handle is one of them, prefer it; else first
+        assert_eq!(select_window(222, "Proj", &wins), Some(222));
+        assert_eq!(select_window(0, "Proj", &wins), Some(111));
     }
 
     #[test]
