@@ -421,14 +421,14 @@ fn focus_window(hwnd: i64) {
     use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic,
-        SetForegroundWindow, ShowWindow, SW_RESTORE, SW_SHOW,
+        SetForegroundWindow, ShowWindow, SW_RESTORE,
     };
     unsafe {
         let h = hwnd as isize as HWND;
+        // Only un-minimize; never touch a normal/maximized/fullscreen window's state
+        // (SW_SHOW/SW_RESTORE on a maximized window would window-ize it).
         if IsIconic(h) != 0 {
-            ShowWindow(h, SW_RESTORE); // un-minimize
-        } else {
-            ShowWindow(h, SW_SHOW);
+            ShowWindow(h, SW_RESTORE);
         }
         let fg = GetForegroundWindow();
         let cur = GetCurrentThreadId();
@@ -453,19 +453,15 @@ fn focus_window(hwnd: i64) {
     }
 }
 
-// Find a visible window whose title contains `needle` (case-insensitive). VSCode /
-// terminal titles include the project folder name, so this targets the right window
-// even across multiple windows. Minimized windows still match (they keep WS_VISIBLE).
-fn find_window_by_title(needle: &str) -> Option<i64> {
-    if needle.trim().is_empty() {
-        return None;
-    }
+// Snapshot of visible, titled, top-level windows: (hwnd, title). Minimized windows
+// still appear (they keep WS_VISIBLE).
+fn collect_windows() -> Vec<(i64, String)> {
     use windows_sys::Win32::Foundation::{HWND, LPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         EnumWindows, GetWindowTextLengthW, GetWindowTextW, IsWindowVisible,
     };
     struct C {
-        items: Vec<(isize, String)>,
+        items: Vec<(i64, String)>,
     }
     unsafe extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> i32 {
         let c = &mut *(lparam as *mut C);
@@ -476,7 +472,7 @@ fn find_window_by_title(needle: &str) -> Option<i64> {
                 let n = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
                 if n > 0 {
                     c.items
-                        .push((hwnd as isize, String::from_utf16_lossy(&buf[..n as usize])));
+                        .push((hwnd as isize as i64, String::from_utf16_lossy(&buf[..n as usize])));
                 }
             }
         }
@@ -485,21 +481,16 @@ fn find_window_by_title(needle: &str) -> Option<i64> {
     unsafe {
         let mut c = C { items: Vec::new() };
         EnumWindows(Some(cb), &mut c as *mut C as LPARAM);
-        let nl = needle.to_lowercase();
         c.items
-            .iter()
-            .find(|(_, t)| t.to_lowercase().contains(&nl))
-            .map(|&(h, _)| h as i64)
     }
 }
 
-// Focus a session's window: prefer matching the project name in a window title,
-// fall back to the process-tree handle captured at emit time.
+// Focus a session's window: pure selector (captured handle first, then project-name
+// title match), then raise it.
 fn focus_session(s: &Session) {
-    if let Some(h) = find_window_by_title(&s.title) {
+    let wins = collect_windows();
+    if let Some(h) = crate::core::select_window(s.hwnd, &s.title, &wins) {
         focus_window(h);
-    } else if s.hwnd != 0 {
-        focus_window(s.hwnd);
     }
 }
 

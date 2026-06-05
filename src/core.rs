@@ -344,6 +344,22 @@ pub fn infer_notification(stdin_json: &str) -> &'static str {
     "waiting"
 }
 
+// Choose which window to focus for a session, given the visible top-level windows
+// (hwnd, title). Prefer the captured process-tree handle when it is itself a real
+// visible window; else match the project name inside a window title; else none.
+pub fn select_window(target_hwnd: i64, target_title: &str, windows: &[(i64, String)]) -> Option<i64> {
+    if target_hwnd != 0 && windows.iter().any(|(h, _)| *h == target_hwnd) {
+        return Some(target_hwnd);
+    }
+    let needle = target_title.trim().to_lowercase();
+    if !needle.is_empty() {
+        if let Some((h, _)) = windows.iter().find(|(_, t)| t.to_lowercase().contains(&needle)) {
+            return Some(*h);
+        }
+    }
+    None
+}
+
 // =====================================================================
 //  Tests — mirror tests/Tests.cs (the C# 38-assertion suite).
 // =====================================================================
@@ -471,6 +487,37 @@ mod tests {
         assert_eq!(infer_auto("turn-ended"), "done");
         assert_eq!(infer_auto("{\"type\":\"agent-turn-complete\"}"), "done");
         assert_eq!(infer_auto("permission needed"), "waiting");
+    }
+
+    #[test]
+    fn select_prefers_captured_hwnd() {
+        // captured hwnd 222 is a real visible window -> use it, even though another
+        // window's title also contains the project name
+        let wins = vec![
+            (111i64, "MyProj - file.rs - Visual Studio Code".to_string()),
+            (222i64, "Other - main.rs - Visual Studio Code".to_string()),
+        ];
+        assert_eq!(select_window(222, "MyProj", &wins), Some(222));
+    }
+
+    #[test]
+    fn select_falls_back_to_title_match() {
+        let wins = vec![
+            (111i64, "Other - Visual Studio Code".to_string()),
+            (222i64, "MyProj - main.rs - Visual Studio Code".to_string()),
+        ];
+        // no captured handle -> match the project name inside a window title
+        assert_eq!(select_window(0, "MyProj", &wins), Some(222));
+        // captured handle not among the visible windows -> also fall back to title
+        assert_eq!(select_window(999, "MyProj", &wins), Some(222));
+    }
+
+    #[test]
+    fn select_none_when_no_match() {
+        let wins = vec![(111i64, "Something Else".to_string())];
+        assert_eq!(select_window(0, "MyProj", &wins), None);
+        assert_eq!(select_window(0, "", &wins), None); // empty title, no handle
+        assert_eq!(select_window(0, "MyProj", &[]), None); // no windows
     }
 
     #[test]
