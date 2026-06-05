@@ -110,6 +110,12 @@ fn t_head_done(l: Lang) -> &'static str {
         Lang::Zh => "处理完成",
     }
 }
+fn t_jump_hint(l: Lang) -> &'static str {
+    match l {
+        Lang::En => "↗ jump",
+        Lang::Zh => "↗ 跳转",
+    }
+}
 
 // ---- icon / colors ----
 
@@ -209,6 +215,7 @@ struct Ids {
     lang_en: MenuId,
     lang_zh: MenuId,
     start_login: MenuId,
+    sessions: Vec<(MenuId, i64)>, // per-session menu line -> hwnd, for click-to-focus
 }
 
 fn build_menu(app: &App, agg: Status, l: Lang, muted: bool) -> (Menu, Ids) {
@@ -226,21 +233,27 @@ fn build_menu(app: &App, agg: Status, l: Lang, muted: bool) -> (Menu, Ids) {
             .cmp(&(a.state as i32))
             .then(b.updated.cmp(&a.updated))
     });
+    let mut session_items: Vec<(MenuId, i64)> = Vec::new();
     if sessions.is_empty() {
         let _ = menu.append(&MenuItem::new(t_no_sessions(l), false, None));
     } else {
         let now = now_unix();
         for s in &sessions {
+            // clickable (enabled) so you can jump to a session anytime from the menu,
+            // not just during the brief toast
             let line = format!(
-                "{} {} - {} - {}  [{} #{}]",
+                "{} {} - {} - {}  [{} #{}]  {}",
                 glyph(s.state),
                 s.agent,
                 t_status(s.state, l),
                 elapsed(now, s.updated),
                 s.title,
-                s.tag
+                s.tag,
+                t_jump_hint(l)
             );
-            let _ = menu.append(&MenuItem::new(line, false, None));
+            let it = MenuItem::new(line, true, None);
+            session_items.push((it.id().clone(), s.hwnd));
+            let _ = menu.append(&it);
         }
     }
 
@@ -272,6 +285,7 @@ fn build_menu(app: &App, agg: Status, l: Lang, muted: bool) -> (Menu, Ids) {
         lang_en: lang_en.id().clone(),
         lang_zh: lang_zh.id().clone(),
         start_login: start_login.id().clone(),
+        sessions: session_items,
     };
 
     let _ = menu.append(&mute);
@@ -499,6 +513,10 @@ pub fn run() {
             } else if ev.id == ids.start_login {
                 set_autostart(!autostart_enabled());
                 ids = refresh(&tray, &app, agg, lang, muted);
+            } else if let Some(&(_, hwnd)) =
+                ids.sessions.iter().find(|(id, _)| *id == ev.id)
+            {
+                focus_window(hwnd);
             }
         }
 

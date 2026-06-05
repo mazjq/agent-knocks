@@ -161,10 +161,92 @@ fn emit(args: &[String]) -> i32 {
 
 // ---- helpers ----
 
+// The window to focus for this session. Prefer the window hosting THIS agent —
+// walk our parent process tree (emit -> agent -> shell -> terminal/IDE) and take
+// the nearest ancestor that owns a visible titled window. This disambiguates
+// multiple terminal/VSCode windows. Fall back to the foreground window.
 #[cfg(windows)]
 fn foreground_hwnd() -> i64 {
+    if let Some(h) = agent_window_hwnd() {
+        return h;
+    }
     use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
-    unsafe { GetForegroundWindow() as i64 }
+    unsafe { GetForegroundWindow() as isize as i64 }
+}
+
+#[cfg(windows)]
+fn agent_window_hwnd() -> Option<i64> {
+    use std::collections::HashMap;
+    use windows_sys::Win32::Foundation::{CloseHandle, HWND, INVALID_HANDLE_VALUE, LPARAM};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowTextLengthW, GetWindowThreadProcessId, IsWindowVisible,
+    };
+
+    struct Collector {
+        wins: Vec<(u32, isize)>,
+    }
+    unsafe extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> i32 {
+        let c = &mut *(lparam as *mut Collector);
+        if IsWindowVisible(hwnd) != 0 && GetWindowTextLengthW(hwnd) > 0 {
+            let mut pid: u32 = 0;
+            GetWindowThreadProcessId(hwnd, &mut pid);
+            c.wins.push((pid, hwnd as isize));
+        }
+        1
+    }
+
+    unsafe {
+        // 1. pid -> parent pid map
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snap == INVALID_HANDLE_VALUE {
+            return None;
+        }
+        let mut parent: HashMap<u32, u32> = HashMap::new();
+        let mut e: PROCESSENTRY32W = std::mem::zeroed();
+        e.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        if Process32FirstW(snap, &mut e) != 0 {
+            loop {
+                parent.insert(e.th32ProcessID, e.th32ParentProcessID);
+                if Process32NextW(snap, &mut e) == 0 {
+                    break;
+                }
+            }
+        }
+        CloseHandle(snap);
+
+        // 2. ancestor chain of current pid (nearest first)
+        let mut chain: Vec<u32> = Vec::new();
+        let mut pid = GetCurrentProcessId();
+        for _ in 0..16 {
+            match parent.get(&pid) {
+                Some(&pp) if pp != 0 && pp != pid => {
+                    chain.push(pp);
+                    pid = pp;
+                }
+                _ => break,
+            }
+        }
+        if chain.is_empty() {
+            return None;
+        }
+
+        // 3. visible titled top-level windows -> their pid
+        let mut col = Collector { wins: Vec::new() };
+        EnumWindows(Some(cb), &mut col as *mut Collector as LPARAM);
+
+        // 4. nearest ancestor that owns a window wins
+        for anc in &chain {
+            if let Some(&(_, hwnd)) = col.wins.iter().find(|(p, _)| p == anc) {
+                return Some(hwnd as i64);
+            }
+        }
+        None
+    }
 }
 #[cfg(not(windows))]
 fn foreground_hwnd() -> i64 {
