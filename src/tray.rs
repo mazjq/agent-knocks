@@ -212,20 +212,25 @@ fn elapsed(now: i64, updated: i64) -> String {
 
 // ---- menu ----
 
-struct Ids {
-    open: MenuId,
-    quit: MenuId,
-    mute: MenuId,
-    test_wait: MenuId,
-    test_done: MenuId,
-    lang_en: MenuId,
-    lang_zh: MenuId,
-    start_login: MenuId,
-    clear_done: MenuId,
-    sessions: Vec<(MenuId, Session)>, // per-session menu line -> session, for click-to-focus
-}
+// Stable menu-item ids. The menu is rebuilt every ≤2s (session timers tick), which
+// previously regenerated auto-incrementing MenuIds; a click on an item whose id had
+// just been swapped under it was dropped (issue #4: Mute appeared to do nothing).
+// Fixing the ids makes `ev.id == ID_*` rebuild-proof for every action. Per-session
+// lines use a stable `session:<key>` id so jumping survives rebuilds too.
+const ID_OPEN: &str = "open";
+const ID_QUIT: &str = "quit";
+const ID_MUTE: &str = "mute";
+const ID_TEST_WAIT: &str = "test_wait";
+const ID_TEST_DONE: &str = "test_done";
+const ID_LANG_EN: &str = "lang_en";
+const ID_LANG_ZH: &str = "lang_zh";
+const ID_START_LOGIN: &str = "start_login";
+const ID_CLEAR_DONE: &str = "clear_done";
+const SESSION_ID_PREFIX: &str = "session:";
 
-fn build_menu(app: &App, agg: Status, l: Lang, muted: bool) -> (Menu, Ids) {
+// Returns the menu plus the per-session id->Session map (for click-to-focus). All
+// other items carry the stable ID_* ids above, matched directly in the run loop.
+fn build_menu(app: &App, agg: Status, l: Lang, muted: bool) -> (Menu, Vec<(MenuId, Session)>) {
     let menu = Menu::new();
     let _ = menu.append(&MenuItem::new(
         format!("{}{}", t_status(agg, l), count_suffix(app, l)),
@@ -258,45 +263,34 @@ fn build_menu(app: &App, agg: Status, l: Lang, muted: bool) -> (Menu, Ids) {
                 s.tag,
                 t_jump_hint(l)
             );
-            let it = MenuItem::new(line, true, None);
-            session_items.push((it.id().clone(), (*s).clone()));
+            let id = MenuId::new(format!("{}{}", SESSION_ID_PREFIX, s.key));
+            let it = MenuItem::with_id(id.clone(), line, true, None);
+            session_items.push((id, (*s).clone()));
             let _ = menu.append(&it);
         }
     }
 
     let _ = menu.append(&PredefinedMenuItem::separator());
 
-    let mute = MenuItem::new(t_mute(l, muted), true, None);
-    let test_wait = MenuItem::new(t_test_wait(l), true, None);
-    let test_done = MenuItem::new(t_test_done(l), true, None);
+    let mute = MenuItem::with_id(ID_MUTE, t_mute(l, muted), true, None);
+    let test_wait = MenuItem::with_id(ID_TEST_WAIT, t_test_wait(l), true, None);
+    let test_done = MenuItem::with_id(ID_TEST_DONE, t_test_done(l), true, None);
     let test = Submenu::new(t_test(l), true);
     let _ = test.append(&test_wait);
     let _ = test.append(&test_done);
-    let open = MenuItem::new(t_open(l), true, None);
+    let open = MenuItem::with_id(ID_OPEN, t_open(l), true, None);
 
-    let lang_en = CheckMenuItem::new("English", true, l == Lang::En, None);
-    let lang_zh = CheckMenuItem::new("中文", true, l == Lang::Zh, None);
+    let lang_en = CheckMenuItem::with_id(ID_LANG_EN, "English", true, l == Lang::En, None);
+    let lang_zh = CheckMenuItem::with_id(ID_LANG_ZH, "中文", true, l == Lang::Zh, None);
     let language = Submenu::new(t_language(l), true);
     let _ = language.append(&lang_en);
     let _ = language.append(&lang_zh);
 
-    let start_login = CheckMenuItem::new(t_autostart(l), true, autostart_enabled(), None);
+    let start_login =
+        CheckMenuItem::with_id(ID_START_LOGIN, t_autostart(l), true, autostart_enabled(), None);
     let (_, _, done_n) = app.counts();
-    let clear_done = MenuItem::new(t_clear_done(l), done_n > 0, None);
-    let quit = MenuItem::new(t_quit(l), true, None);
-
-    let ids = Ids {
-        open: open.id().clone(),
-        quit: quit.id().clone(),
-        mute: mute.id().clone(),
-        test_wait: test_wait.id().clone(),
-        test_done: test_done.id().clone(),
-        lang_en: lang_en.id().clone(),
-        lang_zh: lang_zh.id().clone(),
-        start_login: start_login.id().clone(),
-        clear_done: clear_done.id().clone(),
-        sessions: session_items,
-    };
+    let clear_done = MenuItem::with_id(ID_CLEAR_DONE, t_clear_done(l), done_n > 0, None);
+    let quit = MenuItem::with_id(ID_QUIT, t_quit(l), true, None);
 
     let _ = menu.append(&mute);
     let _ = menu.append(&test);
@@ -307,7 +301,7 @@ fn build_menu(app: &App, agg: Status, l: Lang, muted: bool) -> (Menu, Ids) {
     let _ = menu.append(&PredefinedMenuItem::separator());
     let _ = menu.append(&quit);
 
-    (menu, ids)
+    (menu, session_items)
 }
 
 // ---- sound (intuitive earcons via Win32 Beep, on a background thread) ----
@@ -580,7 +574,7 @@ pub fn run() {
     let mut app = App::new(root.clone());
     let (mut agg, _) = app.reload();
 
-    let (menu, mut ids) = build_menu(&app, agg, lang, muted);
+    let (menu, mut sessions) = build_menu(&app, agg, lang, muted);
     let tray = TrayIconBuilder::new()
         .with_tooltip(tooltip(&app, agg, lang))
         .with_icon(dot_icon(color(agg)))
@@ -601,49 +595,50 @@ pub fn run() {
     let tray_rx = TrayIconEvent::receiver();
     let mut last_tick = Instant::now();
 
-    // rebuild menu+tooltip (labels depend on lang/muted/sessions)
-    let refresh = |tray: &tray_icon::TrayIcon, app: &App, agg, lang, muted| -> Ids {
+    // rebuild menu+tooltip (labels depend on lang/muted/sessions); returns the new
+    // per-session id->Session map. Item ids are stable (ID_*), so this is rebuild-safe.
+    let refresh = |tray: &tray_icon::TrayIcon, app: &App, agg, lang, muted| -> Vec<(MenuId, Session)> {
         let _ = tray.set_tooltip(Some(tooltip(app, agg, lang)));
-        let (m, ids) = build_menu(app, agg, lang, muted);
+        let (m, sessions) = build_menu(app, agg, lang, muted);
         let _ = tray.set_menu(Some(Box::new(m)));
-        ids
+        sessions
     };
 
     loop {
         pump();
 
         while let Ok(ev) = menu_rx.try_recv() {
-            if ev.id == ids.quit {
+            if ev.id == ID_QUIT {
                 return;
-            } else if ev.id == ids.open {
+            } else if ev.id == ID_OPEN {
                 let _ = std::process::Command::new("explorer.exe")
                     .arg(&app.state_dir)
                     .spawn();
-            } else if ev.id == ids.mute {
+            } else if ev.id == ID_MUTE {
                 muted = !muted;
                 save_config(&root, muted, lang);
-                ids = refresh(&tray, &app, agg, lang, muted);
-            } else if ev.id == ids.test_wait {
+                sessions = refresh(&tray, &app, agg, lang, muted);
+            } else if ev.id == ID_TEST_WAIT {
                 let _ = sound.send(Cue::Waiting);
-            } else if ev.id == ids.test_done {
+            } else if ev.id == ID_TEST_DONE {
                 let _ = sound.send(Cue::Done);
-            } else if ev.id == ids.lang_en {
+            } else if ev.id == ID_LANG_EN {
                 lang = Lang::En;
                 save_config(&root, muted, lang);
-                ids = refresh(&tray, &app, agg, lang, muted);
-            } else if ev.id == ids.lang_zh {
+                sessions = refresh(&tray, &app, agg, lang, muted);
+            } else if ev.id == ID_LANG_ZH {
                 lang = Lang::Zh;
                 save_config(&root, muted, lang);
-                ids = refresh(&tray, &app, agg, lang, muted);
-            } else if ev.id == ids.start_login {
+                sessions = refresh(&tray, &app, agg, lang, muted);
+            } else if ev.id == ID_START_LOGIN {
                 set_autostart(!autostart_enabled());
-                ids = refresh(&tray, &app, agg, lang, muted);
-            } else if ev.id == ids.clear_done {
+                sessions = refresh(&tray, &app, agg, lang, muted);
+            } else if ev.id == ID_CLEAR_DONE {
                 app.clear_done();
                 agg = app.aggregate();
                 let _ = tray.set_icon(Some(dot_icon(color(agg))));
-                ids = refresh(&tray, &app, agg, lang, muted);
-            } else if let Some(item) = ids.sessions.iter().find(|(id, _)| *id == ev.id) {
+                sessions = refresh(&tray, &app, agg, lang, muted);
+            } else if let Some(item) = sessions.iter().find(|(id, _)| *id == ev.id) {
                 focus_session(&item.1);
             }
         }
@@ -673,7 +668,7 @@ pub fn run() {
             let (a, cues) = app.reload();
             agg = a;
             let _ = tray.set_icon(Some(dot_icon(color(agg))));
-            ids = refresh(&tray, &app, agg, lang, muted);
+            sessions = refresh(&tray, &app, agg, lang, muted);
             for c in &cues {
                 if !muted {
                     let _ = sound.send(if c.waiting { Cue::Waiting } else { Cue::Done });
