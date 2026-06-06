@@ -129,9 +129,15 @@ fn emit(args: &[String]) -> i32 {
         title = agent.clone();
     }
 
-    // capture the window the user is looking at when this hook fires (fallback for
-    // click-to-focus); preserve previously stored handle/cwd when this event lacks them.
-    let mut hwnd = foreground_hwnd();
+    // Capture the host window via the emit's process ancestry. This resolves only
+    // when the parent chain is intact (Claude). Codex's parent has already exited, so
+    // it returns None -> we keep a low-trust foreground handle as a last resort but do
+    // NOT record a pid for it (a foreground capture is often another agent's window or
+    // our own; scoping click-to-focus to that pid would focus the wrong app). Codex is
+    // instead located at click time by its host process name. Preserve a previously
+    // stored handle/cwd when this event lacks them.
+    let resolved = agent_window_hwnd();
+    let mut hwnd = resolved.unwrap_or_else(foreground_hwnd);
     if (hwnd == 0 || cwd.is_empty()) && file.exists() {
         if let Ok(prev) = std::fs::read_to_string(&file) {
             if hwnd == 0 {
@@ -143,7 +149,8 @@ fn emit(args: &[String]) -> i32 {
         }
     }
 
-    let pid = hwnd_pid(hwnd); // owning process of the host window; used to scope click-to-focus
+    // only scope click-to-focus to a pid when the host window was resolved reliably
+    let pid = if resolved.is_some() { hwnd_pid(hwnd) } else { 0 };
 
     let norm = status_norm(&status);
     let ts = now_unix();
@@ -170,19 +177,19 @@ fn emit(args: &[String]) -> i32 {
 
 // ---- helpers ----
 
-// The window to focus for this session. Prefer the window hosting THIS agent —
-// walk our parent process tree (emit -> agent -> shell -> terminal/IDE) and take
-// the nearest ancestor that owns a visible titled window. This disambiguates
-// multiple terminal/VSCode windows. Fall back to the foreground window.
+// Last-resort handle when ancestry can't resolve the host window: whatever window is
+// in the foreground at hook-fire time. Low trust (it may be another agent's window or
+// our own), so the caller records it without a pid and never scopes focus to it.
 #[cfg(windows)]
 fn foreground_hwnd() -> i64 {
-    if let Some(h) = agent_window_hwnd() {
-        return h;
-    }
     use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
     unsafe { GetForegroundWindow() as isize as i64 }
 }
 
+// The window hosting THIS agent: walk our parent process tree (emit -> agent -> shell
+// -> terminal/IDE) and take the nearest ancestor that owns a visible titled window.
+// This disambiguates multiple terminal/VSCode windows. None when the chain is broken
+// (e.g. Codex, whose emit parent has already exited).
 #[cfg(windows)]
 fn agent_window_hwnd() -> Option<i64> {
     use std::collections::HashMap;
@@ -260,6 +267,10 @@ fn agent_window_hwnd() -> Option<i64> {
 #[cfg(not(windows))]
 fn foreground_hwnd() -> i64 {
     0
+}
+#[cfg(not(windows))]
+fn agent_window_hwnd() -> Option<i64> {
+    None
 }
 
 // Owning process id of a window handle (0 if none).

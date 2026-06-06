@@ -453,9 +453,10 @@ fn focus_window(hwnd: i64) {
     }
 }
 
-// Snapshot of visible, titled, top-level windows: (hwnd, title, pid). Minimized
-// windows still appear (they keep WS_VISIBLE).
-fn collect_windows() -> Vec<(i64, String, i64)> {
+// Snapshot of visible, titled, top-level windows: (hwnd, title, pid, proc). Minimized
+// windows still appear (they keep WS_VISIBLE). `proc` is the owning process's exe name,
+// used to find apps (e.g. Codex) whose window can't be matched by title or ancestry.
+fn collect_windows() -> Vec<(i64, String, i64, String)> {
     use windows_sys::Win32::Foundation::{HWND, LPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
@@ -486,17 +487,57 @@ fn collect_windows() -> Vec<(i64, String, i64)> {
     unsafe {
         let mut c = C { items: Vec::new() };
         EnumWindows(Some(cb), &mut c as *mut C as LPARAM);
+        let names = process_names();
         c.items
+            .into_iter()
+            .map(|(h, t, p)| {
+                let name = names.get(&(p as u32)).cloned().unwrap_or_default();
+                (h, t, p, name)
+            })
+            .collect()
     }
 }
 
-// Focus a session's window: scope to the agent's host process, then match the cwd
-// folder names (deepest first) against window titles, then raise it.
+// pid -> exe name (e.g. "Codex.exe") for every running process, via a Toolhelp snapshot.
+fn process_names() -> std::collections::HashMap<u32, String> {
+    use std::collections::HashMap;
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    let mut names: HashMap<u32, String> = HashMap::new();
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snap == INVALID_HANDLE_VALUE {
+            return names;
+        }
+        let mut e: PROCESSENTRY32W = std::mem::zeroed();
+        e.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        if Process32FirstW(snap, &mut e) != 0 {
+            loop {
+                let s = &e.szExeFile;
+                let len = s.iter().position(|&c| c == 0).unwrap_or(s.len());
+                names.insert(e.th32ProcessID, String::from_utf16_lossy(&s[..len]));
+                if Process32NextW(snap, &mut e) == 0 {
+                    break;
+                }
+            }
+        }
+        CloseHandle(snap);
+    }
+    names
+}
+
+// Focus a session's window: a standalone GUI host (Codex) is found by process name;
+// otherwise scope to the agent's host process and match the cwd folder names (deepest
+// first) against window titles, then raise it.
 fn focus_session(s: &Session) {
     let wins = collect_windows();
     let names = crate::core::cwd_names(&s.cwd, &s.title, 4);
     let name_refs: Vec<&str> = names.iter().map(|n| n.as_str()).collect();
-    if let Some(h) = crate::core::select_window(s.hwnd, s.pid, &name_refs, &wins) {
+    let host_proc = crate::core::host_process(&s.agent);
+    if let Some(h) = crate::core::select_window(s.hwnd, s.pid, &name_refs, host_proc, &wins) {
         focus_window(h);
     }
 }

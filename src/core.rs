@@ -348,20 +348,62 @@ pub fn infer_notification(stdin_json: &str) -> &'static str {
     "waiting"
 }
 
-// Choose which window to focus for a session. `windows` is (hwnd, title, pid).
-// Candidates are scoped to the agent's host process (`target_pid`) when known, so a
-// browser or other app whose title merely mentions the project is never focused.
-// Within those, try each candidate folder name (deepest first: the cwd folder, then
-// its parents) against the titles; deepest match is most specific. Falls back to the
-// captured host window itself, then none.
+// The standalone GUI process that hosts an agent's window, when the agent runs as
+// its own single-window desktop app rather than inside a terminal/IDE. Returned as a
+// lowercase exe name (matched against window owners at click time), or "" if none.
+//
+// Codex needs this: its emit process tree is already broken when the hook fires (the
+// parent has exited), so window ancestry can't be captured, and its window title is
+// the static string "Codex", so cwd-folder matching can't find it either. The one
+// reliable signal is the owning process name. Claude deliberately has no host here:
+// "Claude Code" runs inside Code.exe / a terminal, not the separate "Claude" desktop
+// app, so a process-name match would focus the wrong window — it uses ancestry+cwd.
+pub fn host_process(agent: &str) -> &'static str {
+    match agent.trim().to_lowercase().as_str() {
+        "codex" => "codex.exe",
+        _ => "",
+    }
+}
+
+// Choose which window to focus for a session. `windows` is (hwnd, title, pid, proc).
+//
+// 1. If the agent has a standalone GUI host (`host_proc`, e.g. Codex), find its
+//    window by owning process name — the strongest signal for apps whose ancestry is
+//    broken and whose title is static.
+// 2. Otherwise scope candidates to the agent's host process (`target_pid`) when
+//    known, so a browser or other app whose title merely mentions the project is
+//    never focused. Within those, try each candidate folder name (deepest first: the
+//    cwd folder, then its parents) against the titles; the deepest match is most
+//    specific. Falls back to the captured host window itself, then none.
 pub fn select_window(
     target_hwnd: i64,
     target_pid: i64,
     names: &[&str],
-    windows: &[(i64, String, i64)],
+    host_proc: &str,
+    windows: &[(i64, String, i64, String)],
 ) -> Option<i64> {
-    let host: Vec<&(i64, String, i64)> = if target_pid != 0 {
-        windows.iter().filter(|(_, _, p)| *p == target_pid).collect()
+    let hp = host_proc.trim().to_lowercase();
+    if !hp.is_empty() {
+        let matches: Vec<i64> = windows
+            .iter()
+            .filter(|(_, _, _, pn)| pn.to_lowercase() == hp)
+            .map(|(h, _, _, _)| *h)
+            .collect();
+        if matches.len() == 1 {
+            return Some(matches[0]);
+        }
+        if matches.len() > 1 {
+            // ambiguous (multiple windows of the host app): prefer the captured handle
+            if target_hwnd != 0 && matches.contains(&target_hwnd) {
+                return Some(target_hwnd);
+            }
+            return Some(matches[0]);
+        }
+        // 0 windows owned by the host process -> fall through to cwd matching
+    }
+
+    let host: Vec<&(i64, String, i64, String)> = if target_pid != 0 {
+        windows.iter().filter(|(_, _, p, _)| *p == target_pid).collect()
     } else {
         windows.iter().collect()
     };
@@ -372,8 +414,8 @@ pub fn select_window(
         }
         let matches: Vec<i64> = host
             .iter()
-            .filter(|(_, t, _)| t.to_lowercase().contains(&needle))
-            .map(|(h, _, _)| *h)
+            .filter(|(_, t, _, _)| t.to_lowercase().contains(&needle))
+            .map(|(h, _, _, _)| *h)
             .collect();
         if matches.len() == 1 {
             return Some(matches[0]);
@@ -387,7 +429,7 @@ pub fn select_window(
         }
         // 0 matches for this name -> try the next (shallower) name
     }
-    if target_hwnd != 0 && windows.iter().any(|(h, _, _)| *h == target_hwnd) {
+    if target_hwnd != 0 && windows.iter().any(|(h, _, _, _)| *h == target_hwnd) {
         return Some(target_hwnd);
     }
     None
@@ -540,57 +582,58 @@ mod tests {
         assert_eq!(infer_auto("permission needed"), "waiting");
     }
 
-    // windows tuple: (hwnd, title, pid)
+    // windows tuple: (hwnd, title, pid, proc)
+    fn w(hwnd: i64, title: &str, pid: i64, proc: &str) -> (i64, String, i64, String) {
+        (hwnd, title.to_string(), pid, proc.to_string())
+    }
+
     #[test]
     fn select_title_wins_over_handle() {
         let wins = vec![
-            (111i64, "MyProj - file.rs - Visual Studio Code".to_string(), 1i64),
-            (222i64, "Other - main.rs - Visual Studio Code".to_string(), 1i64),
+            w(111, "MyProj - file.rs - Visual Studio Code", 1, "Code.exe"),
+            w(222, "Other - main.rs - Visual Studio Code", 1, "Code.exe"),
         ];
-        assert_eq!(select_window(222, 0, &["MyProj"], &wins), Some(111));
+        assert_eq!(select_window(222, 0, &["MyProj"], "", &wins), Some(111));
     }
 
     #[test]
     fn select_handle_fallback_when_no_title_match() {
-        let wins = vec![
-            (111i64, "Alpha".to_string(), 1i64),
-            (222i64, "Beta".to_string(), 1i64),
-        ];
-        assert_eq!(select_window(222, 0, &["MyProj"], &wins), Some(222));
-        assert_eq!(select_window(0, 0, &["MyProj"], &wins), None);
+        let wins = vec![w(111, "Alpha", 1, "Code.exe"), w(222, "Beta", 1, "Code.exe")];
+        assert_eq!(select_window(222, 0, &["MyProj"], "", &wins), Some(222));
+        assert_eq!(select_window(0, 0, &["MyProj"], "", &wins), None);
     }
 
     #[test]
     fn select_multi_title_match_prefers_handle() {
         let wins = vec![
-            (111i64, "Proj one - Visual Studio Code".to_string(), 1i64),
-            (222i64, "Proj two - Visual Studio Code".to_string(), 1i64),
+            w(111, "Proj one - Visual Studio Code", 1, "Code.exe"),
+            w(222, "Proj two - Visual Studio Code", 1, "Code.exe"),
         ];
-        assert_eq!(select_window(222, 0, &["Proj"], &wins), Some(222));
-        assert_eq!(select_window(0, 0, &["Proj"], &wins), Some(111));
+        assert_eq!(select_window(222, 0, &["Proj"], "", &wins), Some(222));
+        assert_eq!(select_window(0, 0, &["Proj"], "", &wins), Some(111));
     }
 
     #[test]
     fn select_none_when_no_match() {
-        let wins = vec![(111i64, "Something Else".to_string(), 1i64)];
-        assert_eq!(select_window(0, 0, &["MyProj"], &wins), None);
-        assert_eq!(select_window(0, 0, &[""], &wins), None);
-        assert_eq!(select_window(0, 0, &["MyProj"], &[]), None);
+        let wins = vec![w(111, "Something Else", 1, "Code.exe")];
+        assert_eq!(select_window(0, 0, &["MyProj"], "", &wins), None);
+        assert_eq!(select_window(0, 0, &[""], "", &wins), None);
+        assert_eq!(select_window(0, 0, &["MyProj"], "", &[]), None);
     }
 
     #[test]
     fn select_walks_up_to_parent_folder() {
-        let wins = vec![(111i64, "file.rs - MyTools - Visual Studio Code".to_string(), 1i64)];
-        assert_eq!(select_window(0, 0, &["agent-knocks", "MyTools"], &wins), Some(111));
+        let wins = vec![w(111, "file.rs - MyTools - Visual Studio Code", 1, "Code.exe")];
+        assert_eq!(select_window(0, 0, &["agent-knocks", "MyTools"], "", &wins), Some(111));
     }
 
     #[test]
     fn select_deepest_name_wins() {
         let wins = vec![
-            (111i64, "agent-knocks - Visual Studio Code".to_string(), 1i64),
-            (222i64, "MyTools - Visual Studio Code".to_string(), 1i64),
+            w(111, "agent-knocks - Visual Studio Code", 1, "Code.exe"),
+            w(222, "MyTools - Visual Studio Code", 1, "Code.exe"),
         ];
-        assert_eq!(select_window(0, 0, &["agent-knocks", "MyTools"], &wins), Some(111));
+        assert_eq!(select_window(0, 0, &["agent-knocks", "MyTools"], "", &wins), Some(111));
     }
 
     #[test]
@@ -598,14 +641,55 @@ mod tests {
         // VSCode (host pid 5000) shows the workspace "MyTools"; a browser tab (pid
         // 9000) on the GitHub repo has "agent-knocks" in its title.
         let wins = vec![
-            (111i64, "MyTools - main.rs - Visual Studio Code".to_string(), 5000i64),
-            (222i64, "mazjq/agent-knocks - Google Chrome".to_string(), 9000i64),
+            w(111, "MyTools - main.rs - Visual Studio Code", 5000, "Code.exe"),
+            w(222, "mazjq/agent-knocks - Google Chrome", 9000, "chrome.exe"),
         ];
         // scoped to the host process -> the browser is ignored; "agent-knocks" finds
         // nothing in-process, so it falls to "MyTools" -> the VSCode window.
-        assert_eq!(select_window(0, 5000, &["agent-knocks", "MyTools"], &wins), Some(111));
+        assert_eq!(select_window(0, 5000, &["agent-knocks", "MyTools"], "", &wins), Some(111));
         // without a host pid, the loose match would hit the browser (documented fallback)
-        assert_eq!(select_window(0, 0, &["agent-knocks", "MyTools"], &wins), Some(222));
+        assert_eq!(select_window(0, 0, &["agent-knocks", "MyTools"], "", &wins), Some(222));
+    }
+
+    #[test]
+    fn host_process_mapping() {
+        assert_eq!(host_process("codex"), "codex.exe");
+        assert_eq!(host_process("Codex"), "codex.exe");
+        assert_eq!(host_process("claude"), ""); // Claude Code lives in Code.exe, not the Claude app
+        assert_eq!(host_process("pi"), "");
+    }
+
+    #[test]
+    fn select_codex_by_host_process() {
+        // Codex's window title is the static "Codex" and its cwd folder ("defender")
+        // appears nowhere; its emit captured a bogus pid/hwnd (the foreground VSCode).
+        // The host-process match must still find the real Codex window.
+        let wins = vec![
+            w(111, "defender - main.rs - Visual Studio Code", 5000, "Code.exe"),
+            w(222, "Codex", 7000, "Codex.exe"),
+        ];
+        // even with a wrong captured hwnd/pid pointing at VSCode, host_proc wins
+        assert_eq!(select_window(111, 5000, &["defender", "Codex-proj"], "codex.exe", &wins), Some(222));
+        // with nothing captured, still resolves
+        assert_eq!(select_window(0, 0, &["defender"], "codex.exe", &wins), Some(222));
+    }
+
+    #[test]
+    fn select_host_process_falls_through_when_absent() {
+        // No Codex window present (e.g. Codex run as a CLI) -> fall back to cwd match.
+        let wins = vec![w(111, "defender - Visual Studio Code", 5000, "Code.exe")];
+        assert_eq!(select_window(0, 0, &["defender"], "codex.exe", &wins), Some(111));
+        assert_eq!(select_window(0, 0, &["nomatch"], "codex.exe", &wins), None);
+    }
+
+    #[test]
+    fn select_host_process_multi_prefers_handle() {
+        let wins = vec![
+            w(111, "Codex", 7000, "Codex.exe"),
+            w(222, "Codex", 7001, "Codex.exe"),
+        ];
+        assert_eq!(select_window(222, 0, &[""], "codex.exe", &wins), Some(222));
+        assert_eq!(select_window(0, 0, &[""], "codex.exe", &wins), Some(111));
     }
 
     #[test]
